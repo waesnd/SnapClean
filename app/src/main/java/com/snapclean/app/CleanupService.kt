@@ -271,14 +271,8 @@ class CleanupService : AccessibilityService() {
         } catch (_: Exception) {
             // Some Snapchat releases do not expose an ACTION_VIEW handler.
             // Never fall back to an unqualified URL: it can open the browser.
-            val launch = packageManager.getLaunchIntentForPackage(SNAP) ?: return false
-            try {
-                startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                status("Snapchat açıldı; profil bağlantısı desteklenmiyor: $username")
-                true
-            } catch (_: Exception) {
-                false
-            }
+            // Opening the Snapchat camera is not equivalent to opening this user's profile.
+            false
         }
     }
 
@@ -434,8 +428,8 @@ class CleanupService : AccessibilityService() {
                     addFailed(username, "profil durumu doğrulanamadı ('bekleyen' işareti yok); karşılıklı arkadaş olabilir, dokunulmadı")
                     reviewCount++
                     consecutiveReview++
-                    if (consecutiveReview >= 3) {
-                        stop("Art arda 3 hesapta profil durumu doğrulanamadı. 'Gelişmiş etiketler' içindeki pending= satırını profil dökümüne göre düzelt.")
+                    if (consecutiveReview >= 20) {
+                        stop("Art arda 20 hesapta profil durumu doğrulanamadı. Etiketleri ve ekran dökümlerini incele.")
                     } else {
                         status("Belirsiz, dokunulmadı: $username")
                         advanceAfter(1200L, 2200L)
@@ -519,10 +513,17 @@ class CleanupService : AccessibilityService() {
         return false
     }
 
-    private fun verifySuccess(nodes: List<UiNode>, username: String) =
-        profileUsernameVisible(nodes, username) &&
-            !containsAny(nodes, lbl("friendsince")) &&
-            isPresent(nodes, lbl("add"))
+    private fun verifySuccess(nodes: List<UiNode>, username: String): Boolean {
+        if (!profileUsernameVisible(nodes, username)) return false
+        if (containsAny(nodes, lbl("friendsince"))) return false
+        // Suggested friends also have Add buttons: never treat them as removal proof.
+        val actions = nodes.filter { node ->
+            node.usable && node.viewId.substringAfterLast('/').contains("non_friend_action_button")
+        }
+        return actions.any { node ->
+            node.rawLabels.any { label -> lbl("add").any { fold(label) == fold(it) } }
+        }
+    }
 
     /** Etiketle bulunan tek bir düğmeye basar; belirsizse (birden fazla) güvenle durur. */
     private fun actOnLabel(username: String, now: Long, screen: Screen, key: String, what: String) {
