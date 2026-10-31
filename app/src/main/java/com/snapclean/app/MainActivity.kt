@@ -262,6 +262,7 @@ class MainActivity : ComponentActivity() {
                                     .putString("names", batch.joinToString("\n") { it.username })
                                     .putInt("index", 0)
                                     .putBoolean("running", true)
+                                    .putLong("session_token", System.nanoTime())
                                     .apply()
                                 message = t(
                                     "Experimental batch of ${batch.size} prepared. Enable SnapClean accessibility access if needed.",
