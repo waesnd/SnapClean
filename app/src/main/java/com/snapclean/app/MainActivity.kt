@@ -236,7 +236,7 @@ class MainActivity : ComponentActivity() {
                                 message = t("No unreviewed records", "İncelenmemiş kayıt yok")
                             } else {
                                 getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
-                                    .putString("names", batch.joinToString("\\n") { it.username })
+                                    .putString("names", batch.joinToString("\n") { it.username })
                                     .putInt("index", 0)
                                     .putBoolean("running", true)
                                     .apply()
