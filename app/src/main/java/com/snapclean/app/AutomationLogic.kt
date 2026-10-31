@@ -124,6 +124,16 @@ fun profileUsernameVisible(nodes: List<UiNode>, username: String): Boolean {
     return if (idNodes.isNotEmpty()) usernameVisible(idNodes, username) else usernameVisible(nodes, username)
 }
 
+/**
+ * SIKI profil doğrulaması: yalnızca profilin kimlik satırı (profile_identity_section_username)
+ * hedef kullanıcı adını taşıyorsa true. Arama kutusuna yazılan metin, arama sonucu satırı veya
+ * öneri kartı bu kimlik satırı olmadığı için profil sayılmaz (genel jeton aramasına DÜŞÜLMEZ).
+ */
+fun onTargetProfile(nodes: List<UiNode>, username: String): Boolean {
+    val idNodes = nodes.filter { it.usable && it.viewId.substringAfterLast('/') == PROFILE_USERNAME_ID }
+    return idNodes.isNotEmpty() && usernameVisible(idNodes, username)
+}
+
 enum class ProfileVerdict { USERNAME_MISSING, MUTUAL_FRIEND, NOT_FRIEND_ADD, PENDING_OK, UNKNOWN_STATE }
 
 /**

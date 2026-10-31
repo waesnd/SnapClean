@@ -163,7 +163,7 @@ class CleanupService : AccessibilityService() {
             if (running || manualProfileName.isEmpty()) return
             val screen = readScreen()
             val now = SystemClock.uptimeMillis()
-            if (screen != null && profileUsernameVisible(screen.nodes, manualProfileName)) {
+            if (screen != null && onTargetProfile(screen.nodes, manualProfileName)) {
                 prefs.edit().putString("last_result", "Profil bulundu: $manualProfileName").apply()
                 manualProfileName = ""
                 return
@@ -377,8 +377,18 @@ class CleanupService : AccessibilityService() {
 
         when (step) {
             Step.PROFILE -> {
-                if (profileUsernameVisible(nodes, username)) onProfile(username, now, screen)
-                else if (!searchForProfile(username, now, screen)) onProfile(username, now, screen)
+                if (onTargetProfile(nodes, username)) {
+                    onProfile(username, now, screen)
+                } else {
+                    // Arama aşamasında olsa bile zaman aşımı her zaman işler (eskiden sonsuza kadar bekleyebilirdi).
+                    if (now - stepStartedAt > step.timeoutMs) {
+                        failStep(username, "profil açılamadı (arama aşaması=$searchStage); görülen: " + sample(nodes), screen)
+                        return
+                    }
+                    val busy = searchForProfile(username, now, screen)
+                    if (!busy) stepWait(username, now, screen, "arama düğmesi bulunamadı; görülen: " + sample(nodes))
+                    else status("Profil aranıyor ($searchStage/3): $username")
+                }
             }
 
             Step.OPEN_MENU -> {
@@ -389,7 +399,7 @@ class CleanupService : AccessibilityService() {
                 if (attempts >= step.maxAttempts) { failStep(username, "üç nokta menüsü $attempts denemede açılmadı", screen); return }
                 if (attempts == 0) dumpScreen("MENU-ONCESI", screen)
                 // Önceki deneme yanlış bir yere dokunduysa (paylaşım sayfası vb.) geri dön.
-                if (attempts > 0 && !profileUsernameVisible(nodes, username)) {
+                if (attempts > 0 && !onTargetProfile(nodes, username)) {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     lastActionAt = now
                     status("Beklenmeyen ekran, geri dönülüyor")
@@ -484,7 +494,7 @@ class CleanupService : AccessibilityService() {
                 return true
             }
             if (now - stepStartedAt > 12000L) {
-                failStep(username, "Snapchat arama kutusu tekil olarak bulunamadı", screen)
+                searchFail(username, "Snapchat arama kutusu tekil olarak bulunamadı", screen)
             }
             return true
         }
@@ -499,12 +509,20 @@ class CleanupService : AccessibilityService() {
                 searchActionAt = now
                 status("Arama sonucu açılıyor: $username")
             } else if (matches.size > 1) {
-                failStep(username, "Arama sonuçlarında birden fazla aynı kullanıcı adı var; dokunulmadı", screen)
+                searchFail(username, "Arama sonuçlarında birden fazla aynı kullanıcı adı var; dokunulmadı", screen)
             }
             return true
         }
         // Wait for the verified profile; never guess a different result.
         return true
+    }
+
+    /** Otomasyon çalışırken oturumu durdurur; elle aramada yalnızca durumu yazar (oturum/başarısız listesi bozulmaz). */
+    private fun searchFail(username: String, reason: String, screen: Screen?) {
+        if (running) { failStep(username, reason, screen); return }
+        manualProfileName = ""
+        manualProfileHandler.removeCallbacksAndMessages(null)
+        prefs.edit().putString("last_result", "Profil açılamadı: $username — $reason").apply()
     }
 
     private fun onProfile(username: String, now: Long, screen: Screen) {
@@ -624,7 +642,7 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun verifySuccess(nodes: List<UiNode>, username: String): Boolean {
-        if (!profileUsernameVisible(nodes, username)) return false
+        if (!onTargetProfile(nodes, username)) return false
         if (containsAny(nodes, lbl("friendsince"))) return false
         // Suggested friends also have Add buttons: never treat them as removal proof.
         val actions = nodes.filter { node ->

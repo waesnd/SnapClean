@@ -142,4 +142,23 @@ class AutomationLogicTest {
         assertTrue(containsAny(listOf(node(text = "Ali since 4 Oct - Friends since 2026")), listOf("friends since")))
         assertFalse(containsAny(listOf(node(text = "Ekle")), listOf("beri arkadaş")))
     }
+
+    @Test fun searchFieldTextIsNotAProfile() {
+        // Arama kutusuna kullanıcı adı yazılmış; ekranda kimlik satırı YOK -> profil sayılmamalı.
+        val field = node(text = "sample_user", id = "com.snapchat.android:id/search_input", index = 0)
+        val result = node(text = "sample_user", id = "com.snapchat.android:id/result_username", index = 1)
+        assertFalse(onTargetProfile(listOf(field, result), "sample_user"))
+    }
+
+    @Test fun onlyIdentityRowCountsAsTargetProfile() {
+        val id = "com.snapchat.android:id/profile_identity_section_username"
+        assertTrue(onTargetProfile(listOf(node(text = "sample_user", id = id)), "sample_user"))
+        assertTrue(onTargetProfile(listOf(node(text = "@Sample_User", id = id)), "sample_user"))
+        assertFalse(onTargetProfile(listOf(node(text = "other_user", id = id)), "sample_user"))
+        // Başka profil açık, aranan hesap yalnızca öneri kartında
+        assertFalse(onTargetProfile(realFriendProfile(), "eminee.bayir"))
+        assertTrue(onTargetProfile(realFriendProfile(), "nilgunoruc25"))
+        // Gizli kimlik satırı sayılmaz
+        assertFalse(onTargetProfile(listOf(node(text = "sample_user", id = id, visible = false)), "sample_user"))
+    }
 }
