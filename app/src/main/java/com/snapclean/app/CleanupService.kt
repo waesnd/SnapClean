@@ -39,9 +39,9 @@ class CleanupService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         serviceInfo = serviceInfo.apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
             notificationTimeout = 250
         }
         prefs.registerOnSharedPreferenceChangeListener(sessionListener)
@@ -161,18 +161,29 @@ class CleanupService : AccessibilityService() {
 
     private fun inspectScreen() {
         if (!running || !prefs.getBoolean("running", false)) { running = false; return }
-        if (rootInActiveWindow?.packageName?.toString() != "com.snapchat.android") return
+        val active = rootInActiveWindow
+        if (active == null) {
+            prefs.edit().putString("last_result", "Snapchat ekran ağacı okunamıyor (root=null)").apply()
+            return
+        }
+        if (active.packageName?.toString() != "com.snapchat.android") {
+            prefs.edit().putString("last_result", "Aktif ekran Snapchat değil: ${active.packageName}").apply()
+            return
+        }
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastAction < 850L) return
         if (now - startedAt > 24000L) { stop("Ekran zaman aşımı"); return }
-        val root = rootInActiveWindow ?: return
+        val root = active
         val nodes = collect(root)
         val texts = nodes.map(::label).filter { it.isNotBlank() }
         val username = names.getOrNull(index) ?: run { stop("Liste tamamlandı"); return }
         val usernameFound = texts.any { it.equals(username, ignoreCase = true) || it.equals("@$username", ignoreCase = true) || it.contains(username, ignoreCase = true) && it.length <= username.length + 3 }
         when (step) {
             Step.PROFILE -> {
-                if (!usernameFound) return
+                if (!usernameFound) {
+                    prefs.edit().putString("last_result", "Profil kullanıcı adı okunamadı: $username | görülen: " + texts.take(8).joinToString(" / ").take(220)).apply()
+                    return
+                }
                 verifiedProfile = true
                 if (texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
                     if (!movingToNext) { movingToNext = true; index++; persist(); openNext() }; return
