@@ -20,6 +20,13 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      # Keep the same debug signing certificate between beta builds.
+      # Cache is best-effort; production releases require a protected signing key.
+      - name: Restore beta debug signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: snapclean-beta-debug-signing-v1
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
