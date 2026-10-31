@@ -135,7 +135,12 @@ fun classifyProfile(nodes: List<UiNode>, username: String, labels: Map<String, L
     if (!profileUsernameVisible(nodes, username)) return ProfileVerdict.USERNAME_MISSING
     // Karşılıklı arkadaşlık yazısı varsa kesinlikle dokunma (örn. "... tarihinden beri arkadaş").
     if (containsAny(nodes, labels["friendsince"].orEmpty())) return ProfileVerdict.MUTUAL_FRIEND
-    if (isPresent(nodes, labels["add"].orEmpty())) return ProfileVerdict.NOT_FRIEND_ADD
+    // Suggested-friends cards can contain "Add"; only trust the target profile action.
+    val targetActions = nodes.filter { n ->
+        n.usable && n.viewId.substringAfterLast('/').contains("non_friend_action_button")
+    }
+    val addLabels = labels["add"].orEmpty().map(::fold).toSet()
+    if (targetActions.any { n -> n.rawLabels.any { fold(it) in addLabels } }) return ProfileVerdict.NOT_FRIEND_ADD
     if (isPresent(nodes, labels["pending"].orEmpty())) return ProfileVerdict.PENDING_OK
     return ProfileVerdict.UNKNOWN_STATE
 }
