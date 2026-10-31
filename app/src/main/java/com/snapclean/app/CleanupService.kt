@@ -2,267 +2,679 @@ package com.snapclean.app
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
-import android.content.Intent
-import android.graphics.Rect
-import android.graphics.Path
 import android.accessibilityservice.GestureDescription
+import android.content.Intent
 import android.content.SharedPreferences
+import android.graphics.Path
+import android.graphics.Rect
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
+import kotlin.random.Random
 
 /**
- * Experimental accessibility workflow. Exact text matching, one action per state,
- * timeout, and post-action verification. Never uses absolute screen coordinates.
- * Snapchat's UI may change without notice.
+ * Kullanıcının seçtiği hesaplar için kontrollü Snapchat otomasyonu.
+ *
+ * Tasarım ilkeleri:
+ *  1. Bir adım ANCAK bir sonraki ekranın işareti (ör. "Arkadaşlığı Yönet" yazısı) gerçekten
+ *     göründüğünde ilerler. Tıklamanın "kabul edilmesi" başarı sayılmaz.
+ *  2. Her adımın kendi zaman aşımı ve yeniden deneme bütçesi vardır (ACTION_CLICK -> hareket).
+ *  3. Silme yalnızca: kullanıcı adı doğrulandı + profilde "bekleyen istek" işareti var +
+ *     kuru çalıştırma kapalı + onay düğmesi tek ve belirgin ise yapılır.
+ *  4. "done" durumu yalnızca silme sonrası profilde "Ekle" görülünce yazılır.
+ *  5. Her hata ekran ağacı dökümü ve gerekçeyle kaydedilir; ilk hatada güvenle durur.
  */
 class CleanupService : AccessibilityService() {
-    private enum class Step { PROFILE, MENU, MANAGE, REMOVE, CONFIRM, VERIFY }
+
+    private companion object {
+        const val SNAP = "com.snapchat.android"
+        const val TICK_MS = 700L
+        const val RETRY_AFTER_MS = 1800L
+        const val FRESH_START_MS = 90_000L
+        const val VERIFIED_TTL_MS = 120_000L
+        const val MAX_DUMPS = 3
+        const val MAX_DUMP_LINES = 250
+    }
+
+    private enum class Step(val label: String, val timeoutMs: Long, val maxAttempts: Int) {
+        PROFILE("profil", 22_000L, 0),
+        OPEN_MENU("üç nokta menüsü", 16_000L, 4),
+        MANAGE("Arkadaşlığı Yönet", 10_000L, 3),
+        REMOVE_FRIEND("Arkadaşı Sil", 10_000L, 3),
+        CONFIRM("onay", 10_000L, 2),
+        VERIFY("doğrulama", 26_000L, 0)
+    }
+
+    private class Screen(
+        val nodes: List<UiNode>,
+        val refs: List<AccessibilityNodeInfo>,
+        val windows: Int
+    )
+
     private val handler = Handler(Looper.getMainLooper())
-    private val prefs by lazy { getSharedPreferences("cleanup_batch", MODE_PRIVATE) }
-    private var names = emptyList<String>()
+    private val prefs: SharedPreferences by lazy { getSharedPreferences("cleanup_batch", MODE_PRIVATE) }
+
+    private var names: List<String> = emptyList()
     private var index = 0
     private var running = false
     private var step = Step.PROFILE
-    private var lastAction = 0L
-    private var startedAt = 0L
-    private var session = 0
-    private var verifiedProfile = false
-    private var movingToNext = false
-    private var tickGeneration = 0
-    private var gesturePending = false
+    private var stepStartedAt = 0L
+    private var lastActionAt = 0L
+    private var attempts = 0
+    private var epoch = 0
+    private var transitioning = false
+    private var tickScheduled = false
+    private var profileVerified = false
+    private var profileVerifiedAt = 0L
+    private var unknownSince = 0L
+    private var profileDumped = false
+    private var verifyReopened = false
+    private var consecutiveReview = 0
+    private var processed = 0
+    private var skippedCount = 0
+    private var reviewCount = 0
+    private var dryCount = 0
+    private var gestureBusyUntil = 0L
+    private var lastHeartbeat = 0L
+    private var lastPublish = 0L
+    private var lastReadIssue = ""
+    private var lastStatus = ""
+    private var labelsRaw: String? = "\u0000"
+    private var labels: Map<String, List<String>> = Labels.parse(null)
+
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "session_token" && prefs.getBoolean("running", false)) reload()
-        else if (key == "running" && !prefs.getBoolean("running", false)) running = false
+        if (key == "session_token" && prefs.getBoolean("running", false)) {
+            reload()
+        } else if (key == "running" && !prefs.getBoolean("running", false) && running) {
+            running = false
+            epoch++
+            cancelAll()
+        }
     }
+
+    private val tickRunnable = Runnable {
+        tickScheduled = false
+        if (running) {
+            val mine = epoch
+            try {
+                tick()
+            } catch (e: Exception) {
+                failCurrent("iç hata: " + e.javaClass.simpleName + ": " + e.message)
+            }
+            if (running && mine == epoch && !tickScheduled) scheduleTick(TICK_MS)
+        }
+    }
+
+    // ---------------------------------------------------------------- yaşam döngüsü
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        serviceInfo = serviceInfo.apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
-            feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
-            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
-            notificationTimeout = 250
+        val info = serviceInfo
+        if (info != null) {
+            info.eventTypes = AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
+                AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or AccessibilityEvent.TYPE_WINDOWS_CHANGED
+            info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
+            // INCLUDE_NOT_IMPORTANT_VIEWS: Snapchat birçok görünümü "erişilebilirlik için önemsiz" işaretler;
+            // bu bayrak olmadan düğmeler ağaçta hiç görünmez.
+            info.flags = info.flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS or
+                AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS
+            info.notificationTimeout = 100
+            serviceInfo = info
         }
         prefs.registerOnSharedPreferenceChangeListener(sessionListener)
-        reload()
+        prefs.edit().putBoolean("svc_connected", true).putString("svc_build", buildTag()).apply()
+        // Güvenlik: eski/yarım kalmış bir oturum servis yeniden bağlanınca KENDİLİĞİNDEN başlamaz.
+        val startedAt = prefs.getLong("session_started_at", 0L)
+        val fresh = System.currentTimeMillis() - startedAt in 0..FRESH_START_MS
+        if (prefs.getBoolean("running", false) && !fresh) {
+            prefs.edit().putBoolean("running", false)
+                .putString("last_result", "Eski oturum otomatik devam ettirilmedi (güvenlik). Yeniden başlat.").apply()
+        } else {
+            reload()
+        }
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        prefs.edit().putBoolean("svc_connected", false).apply()
+        return super.onUnbind(intent)
+    }
+
+    override fun onInterrupt() {
+        if (running) stop("Erişilebilirlik servisi sistem tarafından kesildi")
+    }
+
+    override fun onDestroy() {
+        prefs.unregisterOnSharedPreferenceChangeListener(sessionListener)
+        prefs.edit().putBoolean("svc_connected", false).apply()
+        epoch++
+        cancelAll()
+        super.onDestroy()
+    }
+
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        val pkg = event?.packageName?.toString() ?: return
+        if (pkg != SNAP) return
+        val now = SystemClock.uptimeMillis()
+        if (now - lastHeartbeat > 1000L) {
+            lastHeartbeat = now
+            prefs.edit().putLong("svc_last_event", System.currentTimeMillis()).apply()
+        }
+        if (running && !transitioning) scheduleTick(250L)
+    }
+
+    // ---------------------------------------------------------------- oturum / zamanlama
+
+    private fun cancelAll() {
+        handler.removeCallbacksAndMessages(null)
+        tickScheduled = false
+        transitioning = false
+    }
+
+    private fun scheduleTick(delay: Long) {
+        handler.removeCallbacks(tickRunnable)
+        tickScheduled = true
+        handler.postDelayed(tickRunnable, delay)
     }
 
     private fun reload() {
-        session++
-        tickGeneration++
-        names = prefs.getString("names", "").orEmpty().split("\n").filter { it.isNotBlank() }.distinct().take(200)
+        cancelAll()
+        epoch++
+        names = prefs.getString("names", "").orEmpty().split("\n").map { it.trim() }
+            .filter { it.isNotEmpty() }.distinct().take(200)
         index = prefs.getInt("index", 0).coerceIn(0, names.size)
         running = prefs.getBoolean("running", false)
-        if (running && index < names.size) {
-            prefs.edit().putString("last_result", "Başlatılıyor: ${names[index]} (${index + 1}/${names.size})").apply()
-            openNext()
-        }
+        consecutiveReview = 0
+        processed = 0; skippedCount = 0; reviewCount = 0; dryCount = 0
+        lastStatus = ""
+        prefs.edit().remove("failed").remove("dumps").remove("log").apply()
+        if (!running) return
+        if (index >= names.size) { finish(); return }
+        appendLog("Oturum başladı: ${names.size} hesap, kuru çalıştırma=${prefs.getBoolean("dry_run", true)}, sürüm=${buildTag()}")
+        openNext()
     }
 
-    private fun persist() {
-        prefs.edit().putInt("index", index).putBoolean("running", running).apply()
+    private fun openNext() {
+        transitioning = false
+        if (!running) return
+        if (index >= names.size) { finish(); return }
+        val username = names[index]
+        step = Step.PROFILE
+        attempts = 0
+        profileVerified = false
+        verifyReopened = false
+        unknownSince = 0L
+        profileDumped = false
+        stepStartedAt = SystemClock.uptimeMillis()
+        lastActionAt = 0L
+        status("Profil açılıyor: $username (${index + 1}/${names.size})")
+        if (!launchProfile(username)) { failCurrent("profil bağlantısı açılamadı"); return }
+        scheduleTick(1500L)
+    }
+
+    private fun launchProfile(username: String): Boolean = try {
+        startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        true
+    } catch (e: Exception) {
+        false
+    }
+
+    private fun advanceAfter(minMs: Long, maxMs: Long) {
+        transitioning = true
+        index++
+        prefs.edit().putInt("index", index).apply()
+        val mine = epoch
+        handler.postDelayed({
+            if (running && mine == epoch) openNext()
+        }, Random.nextLong(minMs, maxMs))
+    }
+
+    private fun persistStop(reason: String) {
+        prefs.edit().putBoolean("running", false).putInt("index", index).putString("last_result", reason).apply()
     }
 
     private fun stop(reason: String) {
         running = false
-        session++
-        tickGeneration++
-        persist()
-        prefs.edit().putString("last_result", reason).apply()
+        epoch++
+        cancelAll()
+        appendLog("DURDU: $reason")
+        persistStop(reason)
     }
 
-    private fun openNext() {
-        if (!running || !prefs.getBoolean("running", false)) { stop("Durduruldu"); return }
-        if (index >= names.size) { stop("Parti tamamlandı"); return }
-        step = Step.PROFILE
-        prefs.edit().putString("last_result", "Profil açılıyor: ${names[index]} (${index + 1}/${names.size})").apply()
-        movingToNext = false
-        gesturePending = false
-        verifiedProfile = false
-        startedAt = android.os.SystemClock.uptimeMillis()
-        lastAction = startedAt
-        val generation = ++session
-        val tick = ++tickGeneration
-        fun scheduleCheck() {
-            handler.postDelayed(object : Runnable {
-                override fun run() {
-                    if (!running || tick != tickGeneration) return
-                    inspectScreen()
-                    handler.postDelayed(this, 800L)
+    private fun finish() {
+        stop("Parti bitti: $processed silindi+doğrulandı, $skippedCount atlandı, $reviewCount belirsiz (dokunulmadı), $dryCount kuru çalıştırma")
+    }
+
+    // ---------------------------------------------------------------- ana döngü
+
+    private fun tick() {
+        if (!prefs.getBoolean("running", false)) { stop("Durduruldu"); return }
+        if (transitioning) return
+        val username = names.getOrNull(index) ?: run { finish(); return }
+        val now = SystemClock.uptimeMillis()
+        refreshLabels()
+        val screen = readScreen()
+        if (screen == null) {
+            stepWait(username, now, null, lastReadIssue)
+            return
+        }
+        publishRead(screen, now)
+        val nodes = screen.nodes
+
+        when (step) {
+            Step.PROFILE -> onProfile(username, now, screen)
+
+            Step.OPEN_MENU -> {
+                if (!requireVerified(username, screen)) return
+                if (isPresent(nodes, lbl("manage"))) { enter(Step.MANAGE, now); return }
+                if (timedOut(username, now, screen, "üç nokta menüsü açılamadı")) return
+                if (waitingForRetry(now)) return
+                if (attempts >= step.maxAttempts) { failStep(username, "üç nokta menüsü $attempts denemede açılmadı", screen); return }
+                if (attempts == 0) dumpScreen("MENU-ONCESI", screen)
+                // Önceki deneme yanlış bir yere dokunduysa (paylaşım sayfası vb.) geri dön.
+                if (attempts > 0 && !usernameVisible(nodes, username)) {
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    lastActionAt = now
+                    status("Beklenmeyen ekran, geri dönülüyor")
+                    return
                 }
-            }, 1000L)
+                val byLabel = findExact(nodes, lbl("overflow"))
+                val dm = resources.displayMetrics
+                val targets: List<UiNode> = if (byLabel is Match.One) listOf(byLabel.node)
+                else overflowCandidates(nodes, 0, 0, dm.widthPixels, dm.heightPixels)
+                if (targets.isEmpty()) {
+                    attempts++
+                    lastActionAt = now
+                    status("Üç nokta düğmesi bulunamadı (etiket yok, aday yok) deneme $attempts/${step.maxAttempts}")
+                    return
+                }
+                val target = targets[(attempts / 2).coerceAtMost(targets.size - 1)]
+                val viaGesture = attempts % 2 == 1
+                val ok = tapNode(screen, target, viaGesture)
+                attempts++
+                lastActionAt = now
+                status("Menü denemesi $attempts/${step.maxAttempts}: ${describe(target)} ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}")
+            }
+
+            Step.MANAGE -> {
+                if (!requireVerified(username, screen)) return
+                if (isPresent(nodes, lbl("removefriend"))) { enter(Step.REMOVE_FRIEND, now); return }
+                actOnLabel(username, now, screen, "manage", "Arkadaşlığı Yönet")
+            }
+
+            Step.REMOVE_FRIEND -> {
+                if (!requireVerified(username, screen)) return
+                if (isPresent(nodes, lbl("confirm"))) { enter(Step.CONFIRM, now); return }
+                actOnLabel(username, now, screen, "removefriend", "Arkadaşı Sil")
+            }
+
+            Step.CONFIRM -> onConfirm(username, now, screen)
+
+            Step.VERIFY -> {
+                if (verifySuccess(nodes, username)) { complete(username); return }
+                val waited = now - stepStartedAt
+                if (!verifyReopened && waited > 7000L) {
+                    verifyReopened = true
+                    status("Doğrulama için profil yeniden açılıyor: $username")
+                    launchProfile(username)
+                    return
+                }
+                if (waited > step.timeoutMs) {
+                    failStep(username, "'Kaldır'a basıldı ama profilde 'Ekle' doğrulanamadı. Silinmiş OLABİLİR; elle kontrol et (kayıt 'done' yapılmadı)", screen)
+                } else status("Silme doğrulanıyor: $username (${waited / 1000} sn)")
+            }
         }
-        scheduleCheck()
-        handler.postDelayed({
-            if (running && session == generation && step != Step.VERIFY &&
-                android.os.SystemClock.uptimeMillis() - startedAt >= 18000L) stop("Ekran zaman aşımı: " + names[index])
-        }, 19000L)
-        val uri = Uri.parse("https://www.snapchat.com/add/" + Uri.encode(names[index]))
+    }
+
+    private fun onProfile(username: String, now: Long, screen: Screen) {
+        when (classifyProfile(screen.nodes, username, labels)) {
+            ProfileVerdict.USERNAME_MISSING -> {
+                unknownSince = 0L
+                if (!profileDumped && now - stepStartedAt > 6000L) {
+                    profileDumped = true
+                    dumpScreen("PROFIL-OKUNAMADI", screen)
+                }
+                stepWait(username, now, screen, "kullanıcı adı ağaçta görünmüyor; görülen: " + sample(screen.nodes))
+            }
+            ProfileVerdict.NOT_FRIEND_ADD -> {
+                markStatus(username, "skipped")
+                skippedCount++
+                consecutiveReview = 0
+                status("Atlandı ('Ekle' görünüyor, arkadaş değil): $username")
+                advanceAfter(1200L, 2200L)
+            }
+            ProfileVerdict.UNKNOWN_STATE -> {
+                if (unknownSince == 0L) unknownSince = now
+                if (now - unknownSince >= 4000L) {
+                    dumpScreen("DURUM-BELIRSIZ", screen)
+                    addFailed(username, "profil durumu doğrulanamadı ('bekleyen' işareti yok); karşılıklı arkadaş olabilir, dokunulmadı")
+                    reviewCount++
+                    consecutiveReview++
+                    if (consecutiveReview >= 3) {
+                        stop("Art arda 3 hesapta profil durumu doğrulanamadı. 'Gelişmiş etiketler' içindeki pending= satırını profil dökümüne göre düzelt.")
+                    } else {
+                        status("Belirsiz, dokunulmadı: $username")
+                        advanceAfter(1200L, 2200L)
+                    }
+                } else status("Profil durumu okunuyor: $username")
+            }
+            ProfileVerdict.PENDING_OK -> {
+                profileVerified = true
+                profileVerifiedAt = now
+                consecutiveReview = 0
+                dumpScreen("PROFIL-DOGRULANDI", screen)
+                enter(Step.OPEN_MENU, now)
+            }
+        }
+    }
+
+    private fun onConfirm(username: String, now: Long, screen: Screen) {
+        if (!requireVerified(username, screen)) return
+        val nodes = screen.nodes
+        if (verifySuccess(nodes, username)) { complete(username); return }
+        when (val m = findExact(nodes, lbl("confirm"))) {
+            is Match.None -> {
+                if (attempts > 0) enter(Step.VERIFY, now) // iletişim kutusu kapandı; sonucu doğrula
+                else stepWait(username, now, screen, "onay iletişim kutusu bekleniyor")
+            }
+            is Match.Many -> failStep(username, "onay düğmesi için ${m.nodes.size} belirsiz eşleşme; dokunulmadı", screen)
+            is Match.One -> {
+                if (prefs.getBoolean("dry_run", true)) { dryRunDone(username, screen); return }
+                if (now - profileVerifiedAt > VERIFIED_TTL_MS) {
+                    failStep(username, "profil doğrulaması 2 dakikadan eski; güvenlik için iptal", screen)
+                    return
+                }
+                if (waitingForRetry(now)) return
+                if (attempts >= step.maxAttempts) { failStep(username, "onay düğmesine basıldı ama ekran değişmedi", screen); return }
+                if (attempts == 0) dumpScreen("ONAY-ONCESI", screen)
+                val viaGesture = attempts % 2 == 1
+                val ok = tapNode(screen, m.node, viaGesture)
+                attempts++
+                lastActionAt = now
+                status("ONAY basıldı ($attempts/${step.maxAttempts}) ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}: $username")
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- adım yardımcıları
+
+    private fun enter(next: Step, now: Long) {
+        step = next
+        attempts = 0
+        stepStartedAt = now
+        lastActionAt = 0L
+        status("→ ${next.label}")
+    }
+
+    private fun lbl(key: String): List<String> = labels[key].orEmpty()
+
+    private fun refreshLabels() {
+        val raw = prefs.getString("labels", null)
+        if (raw != labelsRaw) {
+            labelsRaw = raw
+            labels = Labels.parse(raw)
+        }
+    }
+
+    private fun waitingForRetry(now: Long) = lastActionAt != 0L && now - lastActionAt < RETRY_AFTER_MS
+
+    private fun timedOut(username: String, now: Long, screen: Screen?, why: String): Boolean {
+        if (now - stepStartedAt > step.timeoutMs) { failStep(username, why, screen); return true }
+        return false
+    }
+
+    private fun stepWait(username: String, now: Long, screen: Screen?, why: String) {
+        if (now - stepStartedAt > step.timeoutMs) {
+            failStep(username, "zaman aşımı: $why", screen)
+        } else status("${step.label} bekleniyor: $why".take(260))
+    }
+
+    private fun requireVerified(username: String, screen: Screen?): Boolean {
+        if (profileVerified && names.getOrNull(index) == username) return true
+        failStep(username, "profil doğrulanmadan işlem denenmeye çalışıldı (iç güvenlik)", screen)
+        return false
+    }
+
+    private fun verifySuccess(nodes: List<UiNode>, username: String) =
+        usernameVisible(nodes, username) && isPresent(nodes, lbl("add"))
+
+    /** Etiketle bulunan tek bir düğmeye basar; belirsizse (birden fazla) güvenle durur. */
+    private fun actOnLabel(username: String, now: Long, screen: Screen, key: String, what: String) {
+        if (timedOut(username, now, screen, "$what bulunamadı/açılmadı")) return
+        if (waitingForRetry(now)) return
+        when (val m = findExact(screen.nodes, lbl(key))) {
+            is Match.None -> status("$what bekleniyor")
+            is Match.Many -> failStep(username, "$what için ${m.nodes.size} belirsiz eşleşme; dokunulmadı", screen)
+            is Match.One -> {
+                if (attempts >= step.maxAttempts) { failStep(username, "$what $attempts denemede ekranı değiştirmedi", screen); return }
+                if (attempts == 0) dumpScreen("${step.name}-ONCESI", screen)
+                val viaGesture = attempts % 2 == 1
+                val ok = tapNode(screen, m.node, viaGesture)
+                attempts++
+                lastActionAt = now
+                status("$what denemesi $attempts/${step.maxAttempts}: ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}")
+            }
+        }
+    }
+
+    private fun dryRunDone(username: String, screen: Screen) {
+        dumpScreen("KURU-ONAY-EKRANI", screen)
+        dryCount++
+        performGlobalAction(GLOBAL_ACTION_BACK)
+        status("KURU ÇALIŞTIRMA tamam: $username için akış onay ekranına kadar çalıştı, 'Kaldır'a BASILMADI")
+        advanceAfter(1800L, 3000L)
+    }
+
+    private fun complete(username: String) {
+        markStatus(username, "done")
+        processed++
+        consecutiveReview = 0
+        status("Silindi ve DOĞRULANDI ('Ekle' görüldü): $username")
+        advanceAfter(2500L, 4500L)
+    }
+
+    private fun failStep(username: String, reason: String, screen: Screen?) {
+        dumpScreen("HATA@${step.name}", screen)
+        addFailed(username, "[${step.label}] $reason")
+        stop("Durdu — $username: $reason")
+    }
+
+    private fun failCurrent(reason: String) {
+        val username = names.getOrNull(index) ?: "?"
+        addFailed(username, reason)
+        stop("Durdu — $username: $reason")
+    }
+
+    // ---------------------------------------------------------------- ekranı okuma ve dokunma
+
+    private fun readScreen(): Screen? {
+        val roots = ArrayList<AccessibilityNodeInfo>()
+        val active: AccessibilityNodeInfo? = rootInActiveWindow
+        if (active != null) roots.add(active)
+        var windowCount = 0
         try {
-            startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        } catch (_: Exception) { stop("Profil açılamadı: " + names[index]) }
-    }
-
-    private fun collect(root: AccessibilityNodeInfo): List<AccessibilityNodeInfo> {
-        val out = mutableListOf<AccessibilityNodeInfo>()
-        fun visit(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > 24 || out.size >= 600) return
-            out.add(node)
-            for (i in 0 until node.childCount) visit(node.getChild(i), depth + 1)
+            val all = windows
+            windowCount = all.size
+            for (w in all) {
+                val r = w.root ?: continue
+                if (roots.none { it.windowId == r.windowId }) roots.add(r)
+            }
+        } catch (e: Exception) {
+            // pencere listesi alınamadı; yalnızca aktif pencere kullanılır
         }
-        visit(root, 0)
-        return out
+        if (roots.isEmpty()) {
+            lastReadIssue = "ağaç boş: rootInActiveWindow=null, pencere sayısı=$windowCount"
+            return null
+        }
+        val snap = roots.filter { it.packageName?.toString() == SNAP }
+        if (snap.isEmpty()) {
+            lastReadIssue = "Snapchat ekranda değil; görünen paketler: " + roots.joinToString(",") { it.packageName?.toString() ?: "?" }
+            return null
+        }
+        val nodes = ArrayList<UiNode>()
+        val refs = ArrayList<AccessibilityNodeInfo>()
+        for (r in snap) flatten(r, nodes, refs, 0)
+        lastReadIssue = ""
+        return Screen(nodes, refs, windowCount)
     }
 
-    private fun label(node: AccessibilityNodeInfo): String =
-        (node.text?.toString() ?: node.contentDescription?.toString() ?: "").trim()
+    private fun flatten(node: AccessibilityNodeInfo?, nodes: MutableList<UiNode>, refs: MutableList<AccessibilityNodeInfo>, depth: Int) {
+        if (node == null || depth > 60 || nodes.size >= 2500) return
+        val r = Rect()
+        node.getBoundsInScreen(r)
+        nodes.add(
+            UiNode(
+                index = nodes.size,
+                text = node.text?.toString().orEmpty(),
+                desc = node.contentDescription?.toString().orEmpty(),
+                viewId = node.viewIdResourceName.orEmpty(),
+                className = node.className?.toString().orEmpty(),
+                left = r.left, top = r.top, right = r.right, bottom = r.bottom,
+                clickable = node.isClickable,
+                enabled = node.isEnabled,
+                visible = node.isVisibleToUser,
+                childCount = node.childCount,
+                depth = depth
+            )
+        )
+        refs.add(node)
+        for (i in 0 until node.childCount) flatten(node.getChild(i), nodes, refs, depth + 1)
+    }
 
-    private fun gestureTap(node: AccessibilityNodeInfo): Boolean {
-        if (gesturePending) return false
-        val bounds = Rect()
-        node.getBoundsInScreen(bounds)
-        if (bounds.width() < 12 || bounds.height() < 12) return false
-        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+    /** gesture=false: en yakın tıklanabilir atayı ACTION_CLICK ile tıklar; yoksa hareketle dokunur. */
+    private fun tapNode(screen: Screen, n: UiNode, gesture: Boolean): Boolean {
+        if (!gesture) {
+            var cur: AccessibilityNodeInfo? = screen.refs.getOrNull(n.index)
+            var hops = 0
+            while (cur != null && hops < 7) {
+                if (cur.isClickable && cur.isEnabled) return cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                cur = cur.parent
+                hops++
+            }
+        }
+        return gestureTapAt(n.centerX, n.centerY)
+    }
+
+    private fun gestureTapAt(x: Int, y: Int): Boolean {
+        val now = SystemClock.uptimeMillis()
+        if (now < gestureBusyUntil) return false
+        val dm = resources.displayMetrics
+        val px = x.coerceIn(1, dm.widthPixels - 1).toFloat()
+        val py = y.coerceIn(1, dm.heightPixels - 1).toFloat()
+        val path = Path().apply { moveTo(px, py) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L)).build()
-        gesturePending = true
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 70L)).build()
+        gestureBusyUntil = now + 1500L
         val accepted = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
-                gesturePending = false
+                gestureBusyUntil = 0L
+                appendLog("dokunma hareketi tamamlandı ($x,$y)")
             }
             override fun onCancelled(gestureDescription: GestureDescription?) {
-                gesturePending = false
-                prefs.edit().putString("last_result", "Dokunma hareketi Android tarafından iptal edildi").apply()
+                gestureBusyUntil = 0L
+                appendLog("dokunma hareketi Android tarafından İPTAL edildi ($x,$y)")
             }
         }, handler)
-        if (!accepted) gesturePending = false
+        if (!accepted) {
+            gestureBusyUntil = 0L
+            appendLog("dispatchGesture reddedildi (canPerformGestures kapalı olabilir)")
+        }
         return accepted
     }
 
-    private fun click(node: AccessibilityNodeInfo): Boolean {
-        var target: AccessibilityNodeInfo? = node
-        while (target != null) {
-            if (target.isClickable && target.isEnabled) {
-                if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
-                return gestureTap(target)
-            }
-            target = target.parent
-        }
-        return gestureTap(node)
+    // ---------------------------------------------------------------- kayıt, döküm, durum
+
+    private fun markStatus(username: String, status: String) {
+        val store = RequestStore(this)
+        try { store.status(username, status) } finally { store.close() }
     }
 
-    private fun tap(nodes: List<AccessibilityNodeInfo>, vararg labels: String): Boolean {
-        val matching = nodes.filter { node ->
-            val value = label(node)
-            labels.any { it.equals(value, ignoreCase = true) }
-        }
-        if (matching.size != 1) return false
-        return click(matching.single())
-    }
-
-    /** Snapchat profile overflow may be an unlabeled icon. Use its bounds only after username verification. */
-    private fun tapProfileOverflow(nodes: List<AccessibilityNodeInfo>, root: AccessibilityNodeInfo): Boolean {
-        val screen = Rect()
-        root.getBoundsInScreen(screen)
-        if (screen.width() <= 0 || screen.height() <= 0) return false
-        val candidates = nodes.filter { it.isClickable && it.isEnabled }.mapNotNull { node ->
-            val bounds = Rect()
-            node.getBoundsInScreen(bounds)
-            if (bounds.width() in 24..150 && bounds.height() in 24..150 &&
-                bounds.centerX() > screen.right - screen.width() / 5 &&
-                bounds.centerY() in screen.top..(screen.top + screen.height() / 6)) node to bounds else null
-        }.sortedByDescending { it.second.centerX() }
-        // Do not guess when multiple unlabeled controls occupy the same area.
-        return if (candidates.size == 1) click(candidates.single().first) else false
-    }
-
-    private fun advance(next: Step) {
-        step = next
-        lastAction = android.os.SystemClock.uptimeMillis()
-    }
-
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event?.packageName?.toString() == "com.snapchat.android") inspectScreen()
-    }
-
-    private fun inspectScreen() {
-        if (!running || !prefs.getBoolean("running", false)) { running = false; return }
-        val active = rootInActiveWindow
-        if (active == null) {
-            prefs.edit().putString("last_result", "Snapchat ekran ağacı okunamıyor (root=null)").apply()
-            return
-        }
-        if (active.packageName?.toString() != "com.snapchat.android") {
-            prefs.edit().putString("last_result", "Aktif ekran Snapchat değil: ${active.packageName}").apply()
-            return
-        }
-        val now = android.os.SystemClock.uptimeMillis()
-        if (now - lastAction < 850L) return
-        if (now - startedAt > 24000L) { stop("Ekran zaman aşımı"); return }
-        val root = active
-        val nodes = collect(root)
-        val texts = nodes.map(::label).filter { it.isNotBlank() }
-        val username = names.getOrNull(index) ?: run { stop("Liste tamamlandı"); return }
-        val usernameFound = texts.any { it.equals(username, ignoreCase = true) || it.equals("@$username", ignoreCase = true) || it.contains(username, ignoreCase = true) && it.length <= username.length + 3 }
-        when (step) {
-            Step.PROFILE -> {
-                if (!usernameFound) {
-                    prefs.edit().putString("last_result", "Profil kullanıcı adı okunamadı: $username | görülen: " + texts.take(8).joinToString(" / ").take(220)).apply()
-                    return
-                }
-                verifiedProfile = true
-                if (texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
-                    if (!movingToNext) {
-                        movingToNext = true
-                        RequestStore(this).use { it.status(username, "skipped") }
-                        index++; persist(); openNext()
-                    }
-                    return
-                }
-                // Menu icon is often exposed as "More"/"More options".
-                if (tap(nodes, "Diğer seçenekler", "Daha fazla", "More options", "More") || tapProfileOverflow(nodes, root)) {
-                    prefs.edit().putString("last_result", "Menü açılıyor: $username").apply()
-                    advance(Step.MENU)
-                }
-                else prefs.edit().putString("last_result", "Profil doğrulandı, menü düğmesi bekleniyor: $username").apply()
-            }
-            Step.MENU -> {
-                if (!verifiedProfile) { stop("Profil doğrulanamadı"); return }
-                if (tap(nodes, "Arkadaşlığı Yönet", "Manage Friendship")) {
-                    prefs.edit().putString("last_result", "Arkadaşlığı Yönet seçildi: $username").apply()
-                    advance(Step.MANAGE)
-                }
-            }
-            Step.MANAGE -> {
-                if (tap(nodes, "Arkadaşı Sil", "Remove Friend")) {
-                    prefs.edit().putString("last_result", "Arkadaşı Sil seçildi: $username").apply()
-                    advance(Step.REMOVE)
-                }
-            }
-            Step.REMOVE -> {
-                if (texts.any { it.contains(username, true) } && tap(nodes, "Kaldır", "Remove")) {
-                    prefs.edit().putString("last_result", "Kaldırma doğrulanıyor: $username").apply()
-                    advance(Step.VERIFY)
-                }
-                else stop("Kaldırma onayı doğrulanamadı: $username")
-            }
-            Step.CONFIRM -> Unit
-            Step.VERIFY -> {
-                if (!movingToNext && usernameFound && texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
-                    movingToNext = true
-                    RequestStore(this).use { it.status(username, "done") }
-                    prefs.edit().putString("last_result", "Tamamlandı: $username").apply()
-                    index++; persist()
-                    handler.postDelayed({ if (running) openNext() }, 1200L)
-                } else if (now - lastAction > 9000L) stop("Ekle doğrulaması başarısız: $username")
-            }
+    private fun status(msg: String) {
+        prefs.edit().putString("last_result", msg).apply()
+        if (msg != lastStatus) {
+            lastStatus = msg
+            appendLog(msg)
         }
     }
 
-    override fun onInterrupt() { stop("Erişilebilirlik kesildi") }
-    override fun onDestroy() { prefs.unregisterOnSharedPreferenceChangeListener(sessionListener); session++; tickGeneration++; super.onDestroy() }
+    private fun stamp(): String = SimpleDateFormat("HH:mm:ss", Locale.ROOT).format(Date())
+
+    private fun appendLog(msg: String) {
+        val old = prefs.getString("log", "").orEmpty()
+        val merged = (old + "\n" + stamp() + " [" + step.name + "] " + msg).takeLast(7000)
+        prefs.edit().putString("log", merged).apply()
+    }
+
+    private fun addFailed(username: String, reason: String) {
+        val old = prefs.getString("failed", "").orEmpty()
+        prefs.edit().putString("failed", (old + "\n" + username + " | " + reason).trim()).apply()
+    }
+
+    private fun buildTag(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: "?"
+    } catch (e: Exception) {
+        "?"
+    }
+
+    private fun describe(n: UiNode): String {
+        val label = n.rawLabels.firstOrNull().orEmpty().take(24)
+        return n.className.substringAfterLast('.') + "[" + n.left + "," + n.top + "," + n.right + "," + n.bottom + "]" +
+            (if (label.isNotEmpty()) " '$label'" else "")
+    }
+
+    private fun sample(nodes: List<UiNode>): String =
+        nodes.filter { it.usable }.flatMap { it.rawLabels }.distinct().take(8).joinToString(" / ").take(160)
+
+    private fun publishRead(screen: Screen, now: Long) {
+        if (now - lastPublish < 1500L) return
+        lastPublish = now
+        val labeled = screen.nodes.count { it.rawLabels.isNotEmpty() }
+        val clickable = screen.nodes.count { it.clickable }
+        prefs.edit().putString(
+            "svc_last_read",
+            "okunan düğüm=${screen.nodes.size}, etiketli=$labeled, tıklanabilir=$clickable, pencere=${screen.windows}"
+        ).apply()
+    }
+
+    private fun dumpScreen(tag: String, screen: Screen?) {
+        val sb = StringBuilder()
+        sb.append("=== ").append(tag).append(" | ").append(stamp()).append(" | sürüm ").append(buildTag())
+            .append(" | ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
+            .append(" Android ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
+        sb.append("hesap=").append(names.getOrNull(index)).append(" adım=").append(step.name)
+            .append(" deneme=").append(attempts).append(" okumaSorunu=").append(lastReadIssue).append('\n')
+        if (screen == null) {
+            sb.append("(ekran okunamadı)\n")
+        } else {
+            val n = screen.nodes
+            sb.append("toplam=").append(n.size).append(" etiketli=").append(n.count { it.rawLabels.isNotEmpty() })
+                .append(" tıklanabilir=").append(n.count { it.clickable })
+                .append(" görünür=").append(n.count { it.visible }).append(" pencere=").append(screen.windows).append('\n')
+            sb.append("derinlik|sınıf|id|text|desc|bayrak(C=tıklanabilir,x=pasif,h=gizli)|sol,üst,sağ,alt\n")
+            var lines = 0
+            for (x in n) {
+                if (lines >= MAX_DUMP_LINES) { sb.append("... (kırpıldı)\n"); break }
+                if (x.rawLabels.isEmpty() && !x.clickable && x.viewId.isEmpty()) continue
+                lines++
+                sb.append(x.depth).append('|').append(x.className.substringAfterLast('.')).append('|')
+                    .append(x.viewId.substringAfterLast('/')).append("|t='").append(x.text.take(60).replace('\n', ' '))
+                    .append("'|d='").append(x.desc.take(60).replace('\n', ' ')).append("'|")
+                    .append(if (x.clickable) "C" else "").append(if (!x.enabled) "x" else "").append(if (!x.visible) "h" else "")
+                    .append('|').append(x.left).append(',').append(x.top).append(',').append(x.right).append(',').append(x.bottom).append('\n')
+            }
+        }
+        val old = prefs.getString("dumps", "").orEmpty()
+        val parts = (if (old.isEmpty()) emptyList() else old.split("\u0001")) + sb.toString()
+        prefs.edit().putString("dumps", parts.takeLast(MAX_DUMPS).joinToString("\u0001")).apply()
+    }
 }
