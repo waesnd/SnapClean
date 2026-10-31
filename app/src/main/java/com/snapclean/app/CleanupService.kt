@@ -130,7 +130,7 @@ class CleanupService : AccessibilityService() {
         val gesture = GestureDescription.Builder()
             .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L)).build()
         gesturePending = true
-        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+        val accepted = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
                 gesturePending = false
             }
