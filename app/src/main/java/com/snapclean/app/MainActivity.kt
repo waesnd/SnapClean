@@ -17,6 +17,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -205,7 +206,7 @@ class MainActivity : ComponentActivity() {
                 )
             ) {
                 Surface(color = background, modifier = Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
                             Text("SnapClean", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
@@ -328,7 +329,7 @@ class MainActivity : ComponentActivity() {
                         Spacer(Modifier.height(6.dp))
                     }
                     Text(t("Showing ${visible.size} records", "${visible.size} kayıt gösteriliyor"), style = MaterialTheme.typography.labelSmall)
-                    LazyColumn(modifier = Modifier.weight(1f)) {
+                    LazyColumn(modifier = Modifier.fillMaxWidth().height(420.dp)) {
                         items(sortedVisible, key = { it.username }) { entry ->
                             Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
                                 Row {
