@@ -3,6 +3,7 @@ package com.snapclean.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
@@ -27,6 +28,10 @@ class CleanupService : AccessibilityService() {
     private var startedAt = 0L
     private var session = 0
     private var verifiedProfile = false
+    private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "running" && prefs.getBoolean("running", false) && !running) reload()
+        else if (key == "running" && !prefs.getBoolean("running", false)) running = false
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -36,6 +41,7 @@ class CleanupService : AccessibilityService() {
             flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             notificationTimeout = 250
         }
+        prefs.registerOnSharedPreferenceChangeListener(sessionListener)
         reload()
     }
 
@@ -157,5 +163,5 @@ class CleanupService : AccessibilityService() {
     }
 
     override fun onInterrupt() { stop("Erişilebilirlik kesildi") }
-    override fun onDestroy() { session++; super.onDestroy() }
+    override fun onDestroy() { prefs.unregisterOnSharedPreferenceChangeListener(sessionListener); session++; super.onDestroy() }
 }
