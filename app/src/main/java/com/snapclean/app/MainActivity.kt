@@ -281,7 +281,7 @@ class MainActivity : ComponentActivity() {
                         },
                         enabled = selected.isNotEmpty() && batchSize in 1..200,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(t("Start selected batch", "Seçilen hesapları başlat")) }
+                    ) { Text(if (language == "tr") "Seçilen hesapları başlat" else "Start selected batch") }
                     TextButton(onClick = {
                         getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                             .putBoolean("running", false).apply()
