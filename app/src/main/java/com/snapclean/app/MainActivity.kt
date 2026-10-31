@@ -231,7 +231,7 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = {
-                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(200)
+                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(1)
                             if (batch.isEmpty()) {
                                 message = t("No unreviewed records", "İncelenmemiş kayıt yok")
                             } else {
@@ -241,14 +241,14 @@ class MainActivity : ComponentActivity() {
                                     .putBoolean("running", true)
                                     .apply()
                                 message = t(
-                                    "Experimental batch prepared (max 200). Enable SnapClean accessibility access. No requests will be cancelled automatically until Snapchat controls are verified.",
-                                    "Deneysel parti hazır (en fazla 200). SnapClean erişilebilirlik iznini aç. Snapchat kontrolleri doğrulanana kadar istekler otomatik iptal edilmeyecek."
+                                    "Experimental one-account test prepared. Enable SnapClean accessibility access. The service may remove that account if Snapchat controls match.",
+                                    "Tek hesaplık deneysel test hazır. SnapClean erişilebilirlik iznini aç. Ekran kontrolleri eşleşirse o hesap kaldırılabilir."
                                 )
                                 startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(t("Prepare 200-account automation", "200 hesaplık otomasyonu hazırla")) }
+                    ) { Text(t("Prepare 1-account test", "1 hesaplık otomasyon testi")) }
                     TextButton(onClick = {
                         getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                             .putBoolean("running", false).apply()
