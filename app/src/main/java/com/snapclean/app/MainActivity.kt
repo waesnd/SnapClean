@@ -26,6 +26,9 @@ import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.util.zip.ZipInputStream
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 
 data class RequestEntry(val username: String, val display: String, val date: String)
 private val accent = Color(0xFF67E8D0)
@@ -47,6 +50,7 @@ class MainActivity : ComponentActivity() {
             var filter by remember { mutableStateOf("all") }
             var message by remember { mutableStateOf("") }
             var confirmClear by remember { mutableStateOf(false) }
+            var importing by remember { mutableStateOf(false) }
 
             fun saveEntries(newEntries: List<RequestEntry>) {
                 entries = newEntries
@@ -75,20 +79,68 @@ class MainActivity : ComponentActivity() {
             }
 
             val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-                if (uri != null) {
-                    try {
-                        val html = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
-                        val parsed = parseSnapchatExport(html)
-                        if (parsed.isEmpty()) {
-                            message = t("No sent requests found. Check your Snapchat export format.", "Gönderilen istek bulunamadı. Snapchat dışa aktarım biçimini kontrol et.")
-                        } else {
-                            val merged = (entries + parsed).distinctBy { it.username.lowercase(Locale.ROOT) }
-                            saveEntries(merged)
-                            message = t("Imported ${parsed.size} records; ${merged.size} unique total.", "${parsed.size} kayıt aktarıldı; toplam ${merged.size} benzersiz kayıt.")
+                if (uri != null && !importing) {
+                    importing = true
+                    message = t("Reading file…", "Dosya okunuyor…")
+                    Thread {
+                        try {
+                            val html = contentResolver.openInputStream(uri)?.use { stream ->
+                                val input = BufferedInputStream(stream)
+                                input.mark(8)
+                                val first = input.read()
+                                val second = input.read()
+                                input.reset()
+                                if (first == 0x50 && second == 0x4B) {
+                                    var found: String? = null
+                                    ZipInputStream(input).use { zip ->
+                                        var entry = zip.nextEntry
+                                        while (entry != null) {
+                                            if (!entry.isDirectory && entry.name.substringAfterLast('/').equals("friends.html", true)) {
+                                                val bytes = ByteArrayOutputStream()
+                                                val buffer = ByteArray(8192)
+                                                var total = 0
+                                                while (true) {
+                                                    val count = zip.read(buffer)
+                                                    if (count < 0) break
+                                                    total += count
+                                                    if (total > 20_000_000) error("HTML too large")
+                                                    bytes.write(buffer, 0, count)
+                                                }
+                                                found = bytes.toString("UTF-8")
+                                                break
+                                            }
+                                            entry = zip.nextEntry
+                                        }
+                                    }
+                                    found ?: error("friends.html missing from ZIP")
+                                } else {
+                                    input.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                                }
+                            } ?: error("Cannot open file")
+                            val parsed = parseSnapchatExport(html)
+                            runOnUiThread {
+                                if (parsed.isEmpty()) {
+                                    message = t(
+                                        "No sent requests detected. Please select the Snapchat friends.html file or its ZIP archive.",
+                                        "Gönderilen istek algılanmadı. Snapchat friends.html dosyasını veya ZIP arşivini seç."
+                                    )
+                                } else {
+                                    val merged = (entries + parsed).distinctBy { it.username.lowercase(Locale.ROOT) }
+                                    saveEntries(merged)
+                                    message = t(
+                                        "Imported ${parsed.size} records; ${merged.size} unique total.",
+                                        "${parsed.size} kayıt aktarıldı; toplam ${merged.size} benzersiz kayıt."
+                                    )
+                                }
+                                importing = false
+                            }
+                        } catch (e: Exception) {
+                            runOnUiThread {
+                                message = t("Import failed: ${e.message ?: "unknown error"}", "İçe aktarma başarısız: ${e.message ?: "bilinmeyen hata"}")
+                                importing = false
+                            }
                         }
-                    } catch (e: Exception) {
-                        message = t("Could not read this file.", "Dosya okunamadı.")
-                    }
+                    }.start()
                 }
             }
 
@@ -130,8 +182,8 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = { picker.launch("*/*") }, modifier = Modifier.fillMaxWidth()) {
-                        Text(t("Import Snapchat friends.html", "Snapchat friends.html dosyasını içe aktar"))
+                    Button(onClick = { picker.launch("*/*") }, enabled = !importing, modifier = Modifier.fillMaxWidth()) {
+                        Text(if (importing) t("Importing…", "İçe aktarılıyor…") else t("Import Snapchat HTML / ZIP", "Snapchat HTML / ZIP içe aktar"))
                     }
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
