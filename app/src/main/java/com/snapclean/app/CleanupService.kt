@@ -222,6 +222,7 @@ class CleanupService : AccessibilityService() {
     private fun launchProfile(username: String): Boolean = try {
         startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username)))
+                .setPackage(SNAP)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
         true
@@ -288,9 +289,11 @@ class CleanupService : AccessibilityService() {
                     status("Beklenmeyen ekran, geri dönülüyor")
                     return
                 }
+                val actionMenu = nodes.filter { it.usable && it.viewId.substringAfterLast("/") == "unified_profile_icon_button_action_menu" }
                 val byLabel = findExact(nodes, lbl("overflow"))
                 val dm = resources.displayMetrics
-                val targets: List<UiNode> = if (byLabel is Match.One) listOf(byLabel.node)
+                val targets: List<UiNode> = if (actionMenu.size == 1) actionMenu
+                else if (byLabel is Match.One) listOf(byLabel.node)
                 else overflowCandidates(nodes, 0, 0, dm.widthPixels, dm.heightPixels)
                 if (targets.isEmpty()) {
                     attempts++
@@ -337,6 +340,18 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun onProfile(username: String, now: Long, screen: Screen) {
+        // Snapchat explicitly states that this profile is already a friend; never remove it as a pending request.
+        val friendSince = screen.nodes.any { node ->
+            val value = fold(node.text + " " + node.desc)
+            (value.contains("tarihinden beri arkadas") || value.contains("friends since") || value.contains("friend since"))
+        }
+        if (usernameVisible(screen.nodes, username) && friendSince) {
+            addFailed(username, "Mevcut arkadaşlık doğrulandı; otomatik kaldırma yapılmadı")
+            reviewCount++
+            status("Mevcut arkadaş, dokunulmadı: $username")
+            advanceAfter(1200L, 2200L)
+            return
+        }
         when (classifyProfile(screen.nodes, username, labels)) {
             ProfileVerdict.USERNAME_MISSING -> {
                 unknownSince = 0L
