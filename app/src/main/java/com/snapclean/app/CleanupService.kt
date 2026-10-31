@@ -31,6 +31,7 @@ class CleanupService : AccessibilityService() {
     private var movingToNext = false
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "session_token" && prefs.getBoolean("running", false)) reload()
+        else if (key == "session_token" && prefs.getBoolean("running", false)) reload()
         else if (key == "running" && prefs.getBoolean("running", false) && !running) reload()
         else if (key == "running" && !prefs.getBoolean("running", false)) running = false
     }
