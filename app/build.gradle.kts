@@ -6,7 +6,7 @@ plugins {
 android {
  namespace = "com.snapclean.app"
  compileSdk = 35
- defaultConfig { applicationId = "com.snapclean.app"; minSdk = 26; targetSdk = 35; versionCode = 4; versionName = "2.2-beta" }
+ defaultConfig { applicationId = "com.snapclean.app"; minSdk = 26; targetSdk = 35; versionCode = 5; versionName = "2.3-beta" }
  buildFeatures { compose = true }
  compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
  kotlinOptions { jvmTarget = "17" }
