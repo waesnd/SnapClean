@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
 import android.graphics.Rect
+import android.graphics.Path
+import android.accessibilityservice.GestureDescription
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Handler
@@ -31,6 +33,7 @@ class CleanupService : AccessibilityService() {
     private var verifiedProfile = false
     private var movingToNext = false
     private var tickGeneration = 0
+    private var gesturePending = false
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "session_token" && prefs.getBoolean("running", false)) reload()
         else if (key == "running" && !prefs.getBoolean("running", false)) running = false
@@ -78,6 +81,7 @@ class CleanupService : AccessibilityService() {
         step = Step.PROFILE
         prefs.edit().putString("last_result", "Profil açılıyor: ${names[index]} (${index + 1}/${names.size})").apply()
         movingToNext = false
+        gesturePending = false
         verifiedProfile = false
         startedAt = android.os.SystemClock.uptimeMillis()
         lastAction = startedAt
@@ -117,13 +121,38 @@ class CleanupService : AccessibilityService() {
     private fun label(node: AccessibilityNodeInfo): String =
         (node.text?.toString() ?: node.contentDescription?.toString() ?: "").trim()
 
+    private fun gestureTap(node: AccessibilityNodeInfo): Boolean {
+        if (gesturePending) return false
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        if (bounds.width() < 12 || bounds.height() < 12) return false
+        val path = Path().apply { moveTo(bounds.exactCenterX(), bounds.exactCenterY()) }
+        val gesture = GestureDescription.Builder()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, 80L)).build()
+        gesturePending = true
+        val accepted = dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                gesturePending = false
+            }
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                gesturePending = false
+                prefs.edit().putString("last_result", "Dokunma hareketi Android tarafından iptal edildi").apply()
+            }
+        }, handler)
+        if (!accepted) gesturePending = false
+        return accepted
+    }
+
     private fun click(node: AccessibilityNodeInfo): Boolean {
         var target: AccessibilityNodeInfo? = node
         while (target != null) {
-            if (target.isClickable && target.isEnabled) return target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            if (target.isClickable && target.isEnabled) {
+                if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+                return gestureTap(target)
+            }
             target = target.parent
         }
-        return false
+        return gestureTap(node)
     }
 
     private fun tap(nodes: List<AccessibilityNodeInfo>, vararg labels: String): Boolean {
@@ -147,7 +176,8 @@ class CleanupService : AccessibilityService() {
                 bounds.centerX() > screen.right - screen.width() / 5 &&
                 bounds.centerY() in screen.top..(screen.top + screen.height() / 6)) node to bounds else null
         }.sortedByDescending { it.second.centerX() }
-        return candidates.firstOrNull()?.let { click(it.first) } ?: false
+        // Do not guess when multiple unlabeled controls occupy the same area.
+        return if (candidates.size == 1) click(candidates.single().first) else false
     }
 
     private fun advance(next: Step) {
@@ -186,21 +216,38 @@ class CleanupService : AccessibilityService() {
                 }
                 verifiedProfile = true
                 if (texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
-                    if (!movingToNext) { movingToNext = true; index++; persist(); openNext() }; return
+                    if (!movingToNext) {
+                        movingToNext = true
+                        RequestStore(this).use { it.status(username, "skipped") }
+                        index++; persist(); openNext()
+                    }
+                    return
                 }
                 // Menu icon is often exposed as "More"/"More options".
-                if (tap(nodes, "Diğer seçenekler", "Daha fazla", "More options", "More") || tapProfileOverflow(nodes, root)) advance(Step.MENU)
+                if (tap(nodes, "Diğer seçenekler", "Daha fazla", "More options", "More") || tapProfileOverflow(nodes, root)) {
+                    prefs.edit().putString("last_result", "Menü açılıyor: $username").apply()
+                    advance(Step.MENU)
+                }
                 else prefs.edit().putString("last_result", "Profil doğrulandı, menü düğmesi bekleniyor: $username").apply()
             }
             Step.MENU -> {
                 if (!verifiedProfile) { stop("Profil doğrulanamadı"); return }
-                if (tap(nodes, "Arkadaşlığı Yönet", "Manage Friendship")) advance(Step.MANAGE)
+                if (tap(nodes, "Arkadaşlığı Yönet", "Manage Friendship")) {
+                    prefs.edit().putString("last_result", "Arkadaşlığı Yönet seçildi: $username").apply()
+                    advance(Step.MANAGE)
+                }
             }
             Step.MANAGE -> {
-                if (tap(nodes, "Arkadaşı Sil", "Remove Friend")) advance(Step.REMOVE)
+                if (tap(nodes, "Arkadaşı Sil", "Remove Friend")) {
+                    prefs.edit().putString("last_result", "Arkadaşı Sil seçildi: $username").apply()
+                    advance(Step.REMOVE)
+                }
             }
             Step.REMOVE -> {
-                if (texts.any { it.contains(username, true) } && tap(nodes, "Kaldır", "Remove")) advance(Step.VERIFY)
+                if (texts.any { it.contains(username, true) } && tap(nodes, "Kaldır", "Remove")) {
+                    prefs.edit().putString("last_result", "Kaldırma doğrulanıyor: $username").apply()
+                    advance(Step.VERIFY)
+                }
                 else stop("Kaldırma onayı doğrulanamadı: $username")
             }
             Step.CONFIRM -> Unit
@@ -208,6 +255,7 @@ class CleanupService : AccessibilityService() {
                 if (!movingToNext && usernameFound && texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
                     movingToNext = true
                     RequestStore(this).use { it.status(username, "done") }
+                    prefs.edit().putString("last_result", "Tamamlandı: $username").apply()
                     index++; persist()
                     handler.postDelayed({ if (running) openNext() }, 1200L)
                 } else if (now - lastAction > 9000L) stop("Ekle doğrulaması başarısız: $username")
