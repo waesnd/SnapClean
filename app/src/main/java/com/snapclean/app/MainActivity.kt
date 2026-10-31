@@ -37,6 +37,7 @@ import java.text.Normalizer
 import java.util.zip.ZipInputStream
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
+import kotlinx.coroutines.delay
 
 data class RequestEntry(val username: String, val display: String, val date: String)
 private val accent = Color(0xFF67E8D0)
@@ -69,6 +70,16 @@ class MainActivity : ComponentActivity() {
             var selected by remember { mutableStateOf(setOf<String>()) }
             var batchSize by remember { mutableIntStateOf(5) }
             var customBatch by remember { mutableStateOf("5") }
+            val cleanupPrefs = remember { getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE) }
+            var automationResult by remember { mutableStateOf(cleanupPrefs.getString("last_result", "").orEmpty()) }
+            var automationRunning by remember { mutableStateOf(cleanupPrefs.getBoolean("running", false)) }
+            LaunchedEffect(Unit) {
+                while (true) {
+                    automationResult = cleanupPrefs.getString("last_result", "").orEmpty()
+                    automationRunning = cleanupPrefs.getBoolean("running", false)
+                    delay(800L)
+                }
+            }
 
             fun refresh() {
                 entries = store.all()
