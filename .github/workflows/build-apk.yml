@@ -27,6 +27,8 @@ jobs:
         with:
           path: ~/.android/debug.keystore
           key: snapclean-beta-debug-signing-v1
+      - name: Run parser regression tests
+        run: gradle testDebugUnitTest --no-daemon
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
       - uses: actions/upload-artifact@v4
