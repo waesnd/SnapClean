@@ -31,6 +31,37 @@ jobs:
         run: gradle testDebugUnitTest --no-daemon
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
+      - name: Verify stable release signing secrets
+        env:
+          SIGNING_KEY: ${{ secrets.SNAPCLEAN_KEYSTORE_BASE64 }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SNAPCLEAN_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SNAPCLEAN_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SNAPCLEAN_KEY_PASSWORD }}
+        run: |
+          if [ -z "$SIGNING_KEY" ] || [ -z "$SIGNING_STORE_PASSWORD" ] || [ -z "$SIGNING_KEY_ALIAS" ] || [ -z "$SIGNING_KEY_PASSWORD" ]; then
+            echo "Stable release signing not configured; debug APK is still available."
+            echo "STABLE_SIGNING=false" >> "$GITHUB_ENV"
+          else
+            echo "STABLE_SIGNING=true" >> "$GITHUB_ENV"
+          fi
+      - name: Build stable signed release APK
+        if: env.STABLE_SIGNING == 'true'
+        env:
+          SIGNING_KEY: ${{ secrets.SNAPCLEAN_KEYSTORE_BASE64 }}
+          SNAPCLEAN_STORE_PASSWORD: ${{ secrets.SNAPCLEAN_STORE_PASSWORD }}
+          SNAPCLEAN_KEY_ALIAS: ${{ secrets.SNAPCLEAN_KEY_ALIAS }}
+          SNAPCLEAN_KEY_PASSWORD: ${{ secrets.SNAPCLEAN_KEY_PASSWORD }}
+        run: |
+          printf '%s' "$SIGNING_KEY" | base64 --decode > "$RUNNER_TEMP/snapclean-release.jks"
+          echo "SNAPCLEAN_KEYSTORE_PATH=$RUNNER_TEMP/snapclean-release.jks" >> "$GITHUB_ENV"
+          SNAPCLEAN_KEYSTORE_PATH="$RUNNER_TEMP/snapclean-release.jks" gradle assembleRelease --no-daemon
+          rm -f "$RUNNER_TEMP/snapclean-release.jks"
+      - name: Upload signed release APK
+        if: env.STABLE_SIGNING == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SnapClean-signed-release
+          path: app/build/outputs/apk/release/app-release.apk
       - uses: actions/upload-artifact@v4
         with:
           name: SnapClean-debug
