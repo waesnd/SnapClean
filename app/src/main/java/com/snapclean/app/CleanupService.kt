@@ -3,6 +3,7 @@ package com.snapclean.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Intent
+import android.graphics.Rect
 import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Handler
@@ -29,10 +30,9 @@ class CleanupService : AccessibilityService() {
     private var session = 0
     private var verifiedProfile = false
     private var movingToNext = false
+    private var tickGeneration = 0
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "session_token" && prefs.getBoolean("running", false)) reload()
-        else if (key == "session_token" && prefs.getBoolean("running", false)) reload()
-        else if (key == "running" && prefs.getBoolean("running", false) && !running) reload()
         else if (key == "running" && !prefs.getBoolean("running", false)) running = false
     }
 
@@ -50,6 +50,7 @@ class CleanupService : AccessibilityService() {
 
     private fun reload() {
         session++
+        tickGeneration++
         names = prefs.getString("names", "").orEmpty().split("\n").filter { it.isNotBlank() }.distinct().take(200)
         index = prefs.getInt("index", 0).coerceIn(0, names.size)
         running = prefs.getBoolean("running", false)
@@ -66,6 +67,7 @@ class CleanupService : AccessibilityService() {
     private fun stop(reason: String) {
         running = false
         session++
+        tickGeneration++
         persist()
         prefs.edit().putString("last_result", reason).apply()
     }
@@ -80,6 +82,17 @@ class CleanupService : AccessibilityService() {
         startedAt = android.os.SystemClock.uptimeMillis()
         lastAction = startedAt
         val generation = ++session
+        val tick = ++tickGeneration
+        fun scheduleCheck() {
+            handler.postDelayed(object : Runnable {
+                override fun run() {
+                    if (!running || tick != tickGeneration) return
+                    inspectScreen()
+                    handler.postDelayed(this, 800L)
+                }
+            }, 1000L)
+        }
+        scheduleCheck()
         handler.postDelayed({
             if (running && session == generation && step != Step.VERIFY &&
                 android.os.SystemClock.uptimeMillis() - startedAt >= 18000L) stop("Ekran zaman aşımı: " + names[index])
@@ -122,14 +135,33 @@ class CleanupService : AccessibilityService() {
         return click(matching.single())
     }
 
+    /** Snapchat profile overflow may be an unlabeled icon. Use its bounds only after username verification. */
+    private fun tapProfileOverflow(nodes: List<AccessibilityNodeInfo>, root: AccessibilityNodeInfo): Boolean {
+        val screen = Rect()
+        root.getBoundsInScreen(screen)
+        if (screen.width() <= 0 || screen.height() <= 0) return false
+        val candidates = nodes.filter { it.isClickable && it.isEnabled }.mapNotNull { node ->
+            val bounds = Rect()
+            node.getBoundsInScreen(bounds)
+            if (bounds.width() in 24..150 && bounds.height() in 24..150 &&
+                bounds.centerX() > screen.right - screen.width() / 5 &&
+                bounds.centerY() in screen.top..(screen.top + screen.height() / 6)) node to bounds else null
+        }.sortedByDescending { it.second.centerX() }
+        return candidates.firstOrNull()?.let { click(it.first) } ?: false
+    }
+
     private fun advance(next: Step) {
         step = next
         lastAction = android.os.SystemClock.uptimeMillis()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.packageName?.toString() == "com.snapchat.android") inspectScreen()
+    }
+
+    private fun inspectScreen() {
         if (!running || !prefs.getBoolean("running", false)) { running = false; return }
-        if (event?.packageName?.toString() != "com.snapchat.android") return
+        if (rootInActiveWindow?.packageName?.toString() != "com.snapchat.android") return
         val now = android.os.SystemClock.uptimeMillis()
         if (now - lastAction < 850L) return
         if (now - startedAt > 24000L) { stop("Ekran zaman aşımı"); return }
@@ -137,7 +169,7 @@ class CleanupService : AccessibilityService() {
         val nodes = collect(root)
         val texts = nodes.map(::label).filter { it.isNotBlank() }
         val username = names.getOrNull(index) ?: run { stop("Liste tamamlandı"); return }
-        val usernameFound = texts.any { it.equals(username, ignoreCase = true) || it.equals("@$username", ignoreCase = true) }
+        val usernameFound = texts.any { it.equals(username, ignoreCase = true) || it.equals("@$username", ignoreCase = true) || it.contains(username, ignoreCase = true) && it.length <= username.length + 3 }
         when (step) {
             Step.PROFILE -> {
                 if (!usernameFound) return
@@ -146,8 +178,8 @@ class CleanupService : AccessibilityService() {
                     if (!movingToNext) { movingToNext = true; index++; persist(); openNext() }; return
                 }
                 // Menu icon is often exposed as "More"/"More options".
-                if (tap(nodes, "Diğer seçenekler", "Daha fazla", "More options", "More")) advance(Step.MENU)
-                else stop("Üç nokta düğmesi tanınmadı: $username")
+                if (tap(nodes, "Diğer seçenekler", "Daha fazla", "More options", "More") || tapProfileOverflow(nodes, root)) advance(Step.MENU)
+                else prefs.edit().putString("last_result", "Profil doğrulandı, menü düğmesi bekleniyor: $username").apply()
             }
             Step.MENU -> {
                 if (!verifiedProfile) { stop("Profil doğrulanamadı"); return }
@@ -173,5 +205,5 @@ class CleanupService : AccessibilityService() {
     }
 
     override fun onInterrupt() { stop("Erişilebilirlik kesildi") }
-    override fun onDestroy() { prefs.unregisterOnSharedPreferenceChangeListener(sessionListener); session++; super.onDestroy() }
+    override fun onDestroy() { prefs.unregisterOnSharedPreferenceChangeListener(sessionListener); session++; tickGeneration++; super.onDestroy() }
 }
