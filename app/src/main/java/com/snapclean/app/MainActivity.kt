@@ -7,6 +7,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
+import android.content.ComponentName
+import android.view.accessibility.AccessibilityManager
+import android.accessibilityservice.AccessibilityServiceInfo
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -244,7 +247,16 @@ class MainActivity : ComponentActivity() {
                                     "Experimental one-account test prepared. Enable SnapClean accessibility access. The service may remove that account if Snapchat controls match.",
                                     "Tek hesaplık deneysel test hazır. SnapClean erişilebilirlik iznini aç. Ekran kontrolleri eşleşirse o hesap kaldırılabilir."
                                 )
-                                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                val manager = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+                                val enabled = manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                                    .any { it.resolveInfo.serviceInfo.packageName == packageName &&
+                                        it.resolveInfo.serviceInfo.name == CleanupService::class.java.name }
+                                if (!enabled) {
+                                    message = t("Enable SnapClean accessibility service once, then return and tap the test button.", "SnapClean erişilebilirlik servisini bir kez aç, geri dönüp test düğmesine tekrar bas.")
+                                    startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                                } else {
+                                    message = t("Accessibility active. Starting one-account test.", "Erişilebilirlik aktif. Tek hesaplık test başlatılıyor.")
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
