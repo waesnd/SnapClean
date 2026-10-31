@@ -3,6 +3,8 @@ package com.snapclean.app
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.accessibilityservice.GestureDescription
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Path
@@ -12,6 +14,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -40,7 +43,7 @@ class CleanupService : AccessibilityService() {
         const val RETRY_AFTER_MS = 1800L
         const val FRESH_START_MS = 90_000L
         const val VERIFIED_TTL_MS = 120_000L
-        const val MAX_DUMPS = 3
+        const val MAX_DUMPS = 6
         const val MAX_DUMP_LINES = 250
         const val HINT_BACKGROUND = " | Snapchat öne gelmedi: arka plandan uygulama açma engelli olabilir " +
             "(HyperOS: Uygulama bilgisi > Diğer izinler > 'Arka planda açılan pencereleri göster' ve pil kısıtlamasını kapat)"
@@ -81,6 +84,9 @@ class CleanupService : AccessibilityService() {
     private var verifyReopened = false
     private var launchRetried = false
     private var searchStage = 0
+    private var chatTaps = 0
+    private var chatDumped = false
+    private var resultDumped = false
     private var searchActionAt = 0L
     private var consecutiveReview = 0
     private var processed = 0
@@ -185,6 +191,7 @@ class CleanupService : AccessibilityService() {
         manualProfileName = username
         manualProfileStarted = SystemClock.uptimeMillis()
         searchStage = 0
+        chatTaps = 0; chatDumped = false; resultDumped = false
         searchActionAt = 0L
         stepStartedAt = manualProfileStarted
         if (!launchProfile(username)) {
@@ -299,6 +306,7 @@ class CleanupService : AccessibilityService() {
         verifyReopened = false
         launchRetried = false
         searchStage = 0
+        chatTaps = 0; chatDumped = false; resultDumped = false
         searchActionAt = 0L
         unknownSince = 0L
         profileDumped = false
@@ -355,6 +363,7 @@ class CleanupService : AccessibilityService() {
         if (!prefs.getBoolean("running", false)) { stop("Durduruldu"); return }
         if (transitioning) return
         val username = names.getOrNull(index) ?: run { finish(); return }
+        if (!screenAvailable()) { stop("Ekran kapandı veya kilitlendi; güvenlik için durduruldu"); return }
         val now = SystemClock.uptimeMillis()
         refreshLabels()
         val screen = readScreen()
@@ -405,6 +414,7 @@ class CleanupService : AccessibilityService() {
                     status("Beklenmeyen ekran, geri dönülüyor")
                     return
                 }
+                if (attempts >= 2 && Build.VERSION.SDK_INT >= 31) performGlobalAction(GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
                 val byId = findByViewId(nodes, lbl("overflowid"))
                 val byLabel = findExact(nodes, lbl("overflow"))
                 val dm = resources.displayMetrics
@@ -504,6 +514,7 @@ class CleanupService : AccessibilityService() {
                 n.usable && n.rawLabels.any { fold(it) == fold(username) } &&
                     screen.refs.getOrNull(n.index)?.isEditable != true
             }
+            if (matches.size == 1 && !resultDumped) { resultDumped = true; dumpScreen("ARAMA-SONUCU", screen) }
             if (matches.size == 1 && tapNode(screen, matches[0], false)) {
                 searchStage = 3
                 searchActionAt = now
@@ -513,7 +524,30 @@ class CleanupService : AccessibilityService() {
             }
             return true
         }
-        // Wait for the verified profile; never guess a different result.
+        // Aşama 3: sonuca dokunuldu. Snapchat çoğu zaman profil yerine SOHBET açar (videoda doğrulandı).
+        // Sohbet başlığına dokunarak profile geçmeyi dene; her dokunuştan sonra yalnızca profil kimlik satırı
+        // hedef kullanıcıyı gösterirse ilerlenir. Başka bir sonuca asla dokunulmaz.
+        if (looksLikeChat(nodes, lbl("chat"))) {
+            if (!chatDumped) { chatDumped = true; dumpScreen("SOHBET-EKRANI", screen) }
+            if (chatTaps >= 4) {
+                searchFail(username, "sohbet başlığına $chatTaps kez dokunuldu ama profil açılmadı", screen)
+                return true
+            }
+            val dm = resources.displayMetrics
+            val cands = chatHeaderCandidates(nodes, 0, 0, dm.widthPixels, dm.heightPixels)
+            searchActionAt = now
+            if (cands.isEmpty()) {
+                chatTaps++
+                status("Sohbet açıldı ama başlık düğümü bulunamadı ($chatTaps/4): $username")
+                return true
+            }
+            val target = cands[(chatTaps / 2).coerceAtMost(cands.size - 1)]
+            val viaGesture = chatTaps % 2 == 1
+            val ok = tapNode(screen, target, viaGesture)
+            chatTaps++
+            status("Sohbet açıldı; profil için başlığa dokunuluyor ($chatTaps/4): ${describe(target)} ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}")
+            return true
+        }
         return true
     }
 
@@ -613,6 +647,13 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun lbl(key: String): List<String> = labels[key].orEmpty()
+
+    /** Ekran kapalı/kilitliyken otomasyon dokunuş göndermez (kullanıcının telefona ihtiyacı olabilir). */
+    private fun screenAvailable(): Boolean {
+        val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        val km = getSystemService(Context.KEYGUARD_SERVICE) as? KeyguardManager
+        return (pm?.isInteractive ?: true) && !(km?.isKeyguardLocked ?: false)
+    }
 
     private fun refreshLabels() {
         val raw = prefs.getString("labels", null)

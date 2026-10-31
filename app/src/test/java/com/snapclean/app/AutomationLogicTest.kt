@@ -161,4 +161,38 @@ class AutomationLogicTest {
         // Gizli kimlik satırı sayılmaz
         assertFalse(onTargetProfile(listOf(node(text = "sample_user", id = id, visible = false)), "sample_user"))
     }
+
+    // Videodaki sohbet ekranı (1220x2712): geri oku, avatar, kişi adı, sağda arkadaş-ekle simgesi, altta bant ve mesaj kutusu.
+    private fun chatScreen() = listOf(
+        node(l = 20, t = 100, r = 100, b = 190, clickable = true, index = 0),                       // geri oku
+        node(l = 120, t = 90, r = 210, b = 200, index = 1, clickable = true),                       // avatar (etiketsiz)
+        node(text = "Laz kızı", l = 240, t = 120, r = 480, b = 180, index = 2),                     // başlık
+        node(l = 1060, t = 100, r = 1180, b = 190, clickable = true, index = 3),                    // arkadaş-ekle simgesi
+        node(text = "@Laz kızı seni henüz arkadaş olarak eklemedi.", l = 40, t = 2380, r = 1180, b = 2460, index = 4),
+        node(text = "Mesaj Gönder", l = 120, t = 2580, r = 700, b = 2660, index = 5)
+    )
+
+    @Test fun chatScreenIsRecognised() {
+        assertTrue(looksLikeChat(chatScreen(), labels["chat"].orEmpty()))
+        assertFalse(looksLikeChat(realFriendProfile(), labels["chat"].orEmpty()))
+    }
+
+    @Test fun chatHeaderCandidatesPreferNameAndSkipBackAndRightIcon() {
+        val c = chatHeaderCandidates(chatScreen(), 0, 0, 1220, 2712)
+        assertEquals(2, c[0].index)                       // etiketli kişi adı önce
+        assertTrue(c.none { it.index == 0 })              // geri oku elenir
+        assertTrue(c.none { it.index == 3 })              // sağ üst simge elenir
+        assertTrue(c.none { it.index == 4 || it.index == 5 }) // alttaki bant ve mesaj kutusu elenir
+    }
+
+    @Test fun chatHeaderCandidatesEmptyOnEmptyScreen() {
+        assertTrue(chatHeaderCandidates(emptyList(), 0, 0, 0, 0).isEmpty())
+        assertTrue(chatHeaderCandidates(realFriendProfile().take(1), 0, 0, 1220, 2712).isEmpty())
+    }
+
+    @Test fun chatScreenIsNeverATargetProfile() {
+        // Sohbet ekranında kimlik satırı yok: kullanıcı adı başlıkta bile geçse profil sayılmaz.
+        val withName = chatScreen() + node(text = "halenurbasar61", index = 6)
+        assertFalse(onTargetProfile(withName, "halenurbasar61"))
+    }
 }

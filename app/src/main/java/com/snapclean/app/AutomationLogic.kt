@@ -180,6 +180,31 @@ fun overflowCandidates(nodes: List<UiNode>, screenLeft: Int, screenTop: Int, scr
     return reps.take(4)
 }
 
+/** Snapchat SOHBET ekranı işareti (mesaj kutusu veya "henüz arkadaş olarak eklemedi" bandı). */
+fun looksLikeChat(nodes: List<UiNode>, markers: List<String>): Boolean = containsAny(nodes, markers)
+
+/**
+ * Sohbet ekranında profile geçmek için dokunulacak başlık adayları: ekranın üst %12'sindeki, geri
+ * okunun (sol %10) ve sağ üstteki simgelerin (sağ %22) dışında kalan, etiketli veya tıklanabilir
+ * düğümler. Etiketli başlık (kişi adı) önce, soldan sağa; ardından etiketsiz tıklanabilirler (avatar).
+ * Dokunuştan sonra sonucu çağıran doğrular (profil kimlik satırı görünmeli); burada karar verilmez.
+ */
+fun chatHeaderCandidates(nodes: List<UiNode>, screenLeft: Int, screenTop: Int, screenRight: Int, screenBottom: Int): List<UiNode> {
+    val w = screenRight - screenLeft
+    val h = screenBottom - screenTop
+    if (w <= 0 || h <= 0) return emptyList()
+    val picked = nodes.filter { n ->
+        n.usable && n.enabled &&
+            n.centerY < screenTop + h * 0.12 &&
+            n.centerX > screenLeft + w * 0.10 && n.centerX < screenLeft + w * 0.78 &&
+            n.width <= w * 0.6 && n.height <= h * 0.08 &&
+            (n.rawLabels.isNotEmpty() || n.clickable)
+    }.sortedWith(compareByDescending<UiNode> { it.rawLabels.isNotEmpty() }.thenBy { it.centerX })
+    val reps = mutableListOf<UiNode>()
+    for (n in picked) if (reps.none { it.contains(n) || n.contains(it) }) reps.add(n)
+    return reps.take(3)
+}
+
 /** Ayarlanabilir etiket sözlüğü. Satır biçimi: anahtar=etiket1,etiket2 */
 object Labels {
     val defaults: LinkedHashMap<String, List<String>> = linkedMapOf(
@@ -190,7 +215,8 @@ object Labels {
         "confirm" to listOf("Remove", "Kaldır"),
         "add" to listOf("Add", "Add Friend", "Ekle", "Arkadaş Ekle"),
         "pending" to listOf("Pending", "Beklemede", "Request Sent", "İstek Gönderildi"),
-        "friendsince" to listOf("tarihinden beri arkadaş", "beri arkadaş", "friends since")
+        "friendsince" to listOf("tarihinden beri arkadaş", "beri arkadaş", "friends since"),
+        "chat" to listOf("Mesaj Gönder", "Send a chat", "Send a message", "henüz arkadaş olarak eklemedi")
     )
 
     fun defaultText(): String = defaults.entries.joinToString("\n") { (k, v) -> k + "=" + v.joinToString(",") }
