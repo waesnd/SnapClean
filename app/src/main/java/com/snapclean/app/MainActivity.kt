@@ -136,14 +136,13 @@ class MainActivity : ComponentActivity() {
                 message = doneMessage
             }
             fun openProfile(username: String) {
-                val url = "https://www.snapchat.com/add/" + Uri.encode(username)
-                try {
-                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                    message = t("Verify the profile in Snapchat before taking action.", "İşlem yapmadan önce Snapchat profilini doğrula.")
-                } catch (e: Exception) {
+                if (!cleanupPrefs.getBoolean("svc_connected", false)) {
                     copyUsername(username)
-                    message = t("Could not open profile. Username copied.", "Profil açılamadı. Kullanıcı adı kopyalandı.")
+                    message = t("Enable accessibility service first. Username copied.", "Önce erişilebilirlik servisini aç. Kullanıcı adı kopyalandı.")
+                    return
                 }
+                cleanupPrefs.edit().putString("manual_profile_request", username).apply()
+                message = t("Searching in Snapchat: $username", "Snapchat içinde aranıyor: $username")
             }
 
             val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
