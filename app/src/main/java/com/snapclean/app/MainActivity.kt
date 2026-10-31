@@ -118,12 +118,10 @@ class MainActivity : ComponentActivity() {
                                 }
                             } ?: error("Cannot open file")
                             val parsed = parseSnapchatExport(html)
+                            val diagnostic = diagnoseSnapchatExport(html)
                             runOnUiThread {
                                 if (parsed.isEmpty()) {
-                                    message = t(
-                                        "No sent requests detected. Please select the Snapchat friends.html file or its ZIP archive.",
-                                        "Gönderilen istek algılanmadı. Snapchat friends.html dosyasını veya ZIP arşivini seç."
-                                    )
+                                    message = t("No records found. $diagnostic", "Kayıt bulunamadı. $diagnostic")
                                 } else {
                                     val merged = (entries + parsed).distinctBy { it.username.lowercase(Locale.ROOT) }
                                     saveEntries(merged)
@@ -269,38 +267,51 @@ private fun loadStatuses(raw: String): Map<String, String> = try {
     obj.keys().asSequence().associateWith { obj.optString(it) }
 } catch (e: Exception) { emptyMap() }
 
+private fun diagnoseSnapchatExport(html: String): String {
+    val doc = Jsoup.parse(html)
+    val headings = doc.select("h1,h2,h3,h4,h5").map { it.text().take(55) }
+    return "HTML chars=${html.length}; tables=${doc.select("table").size}; headings=${headings.take(6).joinToString(" / ")}"
+}
+
 private fun parseSnapchatExport(html: String): List<RequestEntry> {
     val doc = Jsoup.parse(html)
-    val headings = doc.select("h1,h2,h3,h4,h5")
-    val titleKeywords = listOf(
+    val keywords = listOf(
         "gönderilen arkadaşlık istekleri", "sent friend requests",
         "friend requests sent", "outgoing friend requests",
         "demandes d’amis envoyées", "demandes d'amis envoyées",
         "gesendete freundschaftsanfragen", "solicitudes de amistad enviadas"
     )
-    val heading = headings.firstOrNull { element ->
-        val title = element.text().trim().lowercase(Locale.ROOT)
-        titleKeywords.any { title.contains(it) }
+    val heading = doc.select("h1,h2,h3,h4,h5").firstOrNull { element ->
+        val normalized = element.text().trim().lowercase(Locale.ROOT)
+        keywords.any { normalized.contains(it) }
+    }
+    val table = if (heading != null) {
+        // The actual Snapchat export places the target table immediately after
+        // its h3 heading. Skip any non-heading siblings if layout changes.
+        var sibling = heading.nextElementSibling()
+        var found: org.jsoup.nodes.Element? = null
+        while (sibling != null) {
+            if (sibling.tagName().matches(Regex("h[1-5]"))) break
+            found = if (sibling.tagName() == "table") sibling else sibling.selectFirst("table")
+            if (found != null) break
+            sibling = sibling.nextElementSibling()
+        }
+        found
+    } else null
+
+    // Some exports may use a different heading tag or translated title.
+    // Match table captions/preceding headings but never blindly import all
+    // tables, which could mix blocked and removed users into sent requests.
+    val selected = table ?: doc.select("table").firstOrNull { candidate ->
+        val previous = candidate.previousElementSibling()
+        val context = previous?.text()?.lowercase(Locale.ROOT) ?: ""
+        keywords.any { context.contains(it) }
     } ?: return emptyList()
 
-    // Snapchat exports can place explanatory text between a heading and its table.
-    // Find the first table before the next section heading, rather than assuming
-    // that the table is the heading's immediate sibling.
-    var sibling = heading.nextElementSibling()
-    var table: org.jsoup.nodes.Element? = null
-    while (sibling != null) {
-        if (sibling.tagName().matches(Regex("h[1-5]"))) break
-        table = if (sibling.tagName() == "table") sibling else sibling.selectFirst("table")
-        if (table != null) break
-        sibling = sibling.nextElementSibling()
-    }
-    val rows = table?.select("tr") ?: return emptyList()
-    return rows.mapNotNull { row ->
+    return selected.select("tr").mapNotNull { row ->
         val cells = row.select("td")
         if (cells.size < 2) null else {
             val username = cells[0].text().trim().removePrefix("@")
-            // Avoid strict Snapchat username regex here: historical export data
-            // may include usernames that no longer satisfy current rules.
             if (username.isBlank() || username.length > 80) null
             else RequestEntry(username, cells[1].text(), cells.getOrNull(2)?.text() ?: "")
         }
