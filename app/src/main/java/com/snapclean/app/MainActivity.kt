@@ -11,6 +11,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -41,27 +43,62 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("snapclean_v2", Context.MODE_PRIVATE)
+        val store = RequestStore(this)
+        if (!prefs.getBoolean("sqlite_migrated", false)) {
+            store.upsert(loadEntries(prefs.getString("entries", "[]") ?: "[]"))
+            for ((username, status) in loadStatuses(prefs.getString("statuses", "{}") ?: "{}")) store.status(username, status)
+            prefs.edit().putBoolean("sqlite_migrated", true).remove("entries").remove("statuses").apply()
+        }
         setContent {
             val deviceLanguage = LocalConfiguration.current.locales[0].language
             var language by remember { mutableStateOf(prefs.getString("language", if (deviceLanguage == "tr") "tr" else "en") ?: "en") }
             fun t(en: String, tr: String) = if (language == "tr") tr else en
-            var entries by remember { mutableStateOf(loadEntries(prefs.getString("entries", "[]") ?: "[]")) }
-            var statuses by remember { mutableStateOf(loadStatuses(prefs.getString("statuses", "{}") ?: "{}")) }
+            var entries by remember { mutableStateOf(store.all()) }
+            var statuses by remember { mutableStateOf(store.statuses()) }
             var query by remember { mutableStateOf("") }
             var filter by remember { mutableStateOf("all") }
             var message by remember { mutableStateOf("") }
             var confirmClear by remember { mutableStateOf(false) }
             var importing by remember { mutableStateOf(false) }
+            var sort by remember { mutableStateOf("newest") }
+            var selected by remember { mutableStateOf(setOf<String>()) }
 
+            fun refresh() {
+                entries = store.all()
+                statuses = store.statuses()
+            }
             fun saveEntries(newEntries: List<RequestEntry>) {
-                entries = newEntries
-                val array = JSONArray()
-                newEntries.forEach { array.put(JSONObject().put("username", it.username).put("display", it.display).put("date", it.date)) }
-                prefs.edit().putString("entries", array.toString()).apply()
+                store.upsert(newEntries)
+                refresh()
             }
             fun setStatus(username: String, status: String) {
-                statuses = statuses.toMutableMap().apply { put(username, status) }
-                prefs.edit().putString("statuses", JSONObject(statuses).toString()).apply()
+                store.status(username, status)
+                refresh()
+            }
+            fun bulkStatus(status: String) {
+                store.bulkStatus(selected.toList(), status)
+                selected = emptySet()
+                refresh()
+            }
+            val exportBackup = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+                if (uri != null) {
+                    try {
+                        contentResolver.openOutputStream(uri)?.use { it.write(store.backup().toByteArray(Charsets.UTF_8)) }
+                            ?: error("Unable to write backup")
+                        message = t("Backup saved", "Yedek kaydedildi")
+                    } catch (e: Exception) { message = t("Backup failed: ${e.message}", "Yedekleme hatası: ${e.message}") }
+                }
+            }
+            val importBackup = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+                if (uri != null) {
+                    try {
+                        val raw = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+                            ?: error("Unable to read backup")
+                        val count = store.restore(raw)
+                        refresh()
+                        message = t("Restored $count records", "$count kayıt geri yüklendi")
+                    } catch (e: Exception) { message = t("Restore failed: ${e.message}", "Geri yükleme hatası: ${e.message}") }
+                }
             }
             fun copyUsername(username: String) {
                 (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
@@ -124,8 +161,8 @@ class MainActivity : ComponentActivity() {
                                 if (parsed.isEmpty()) {
                                     message = t("No records found. $diagnostic", "Kayıt bulunamadı. $diagnostic")
                                 } else {
-                                    val merged = (entries + parsed).distinctBy { it.username.lowercase(Locale.ROOT) }
-                                    saveEntries(merged)
+                                    saveEntries(parsed)
+                                    val merged = entries
                                     message = t(
                                         "Imported ${parsed.size} records; ${merged.size} unique total.",
                                         "${parsed.size} kayıt aktarıldı; toplam ${merged.size} benzersiz kayıt."
@@ -149,6 +186,11 @@ class MainActivity : ComponentActivity() {
                 (entry.username.contains(query, true) || entry.display.contains(query, true)) &&
                     (filter == "all" || (filter == "pending" && statuses[entry.username].isNullOrEmpty()) ||
                         statuses[entry.username] == filter)
+            }
+            val sortedVisible = when (sort) {
+                "oldest" -> visible.sortedBy { it.date }
+                "username" -> visible.sortedBy { it.username.lowercase(Locale.ROOT) }
+                else -> visible.sortedByDescending { it.date }
             }
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -192,14 +234,32 @@ class MainActivity : ComponentActivity() {
                         singleLine = true, modifier = Modifier.fillMaxWidth()
                     )
                     Spacer(Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(
                             "all" to t("All", "Tümü"),
-                            "pending" to t("Pending", "Bekleyen"),
+                            "pending" to t("Unreviewed", "İncelenmemiş"),
                             "done" to t("Reviewed", "İncelenen"),
                             "skipped" to t("Skipped", "Atlanan")
                         ).forEach { (key, label) ->
                             FilterChip(selected = filter == key, onClick = { filter = key }, label = { Text(label) })
+                        }
+                    }
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { sort = "newest" }) { Text(t("Newest", "En yeni")) }
+                        TextButton(onClick = { sort = "oldest" }) { Text(t("Oldest", "En eski")) }
+                        TextButton(onClick = { sort = "username" }) { Text(t("Username A-Z", "Kullanıcı A-Z")) }
+                    }
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { exportBackup.launch("snapclean-backup.json") }) { Text(t("Backup", "Yedekle")) }
+                        TextButton(onClick = { importBackup.launch("application/json") }) { Text(t("Restore", "Geri yükle")) }
+                        TextButton(onClick = { selected = sortedVisible.map { it.username }.toSet() }) { Text(t("Select visible", "Görünenleri seç")) }
+                    }
+                    if (selected.isNotEmpty()) {
+                        Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(t("${selected.size} selected", "${selected.size} seçili"))
+                            TextButton(onClick = { bulkStatus("done") }) { Text(t("Review selected", "Seçileni incele")) }
+                            TextButton(onClick = { bulkStatus("skipped") }) { Text(t("Skip selected", "Seçileni atla")) }
+                            TextButton(onClick = { selected = emptySet() }) { Text(t("Cancel", "İptal")) }
                         }
                     }
                     if (message.isNotBlank()) {
@@ -208,8 +268,13 @@ class MainActivity : ComponentActivity() {
                     }
                     Text(t("Showing ${visible.size} records", "${visible.size} kayıt gösteriliyor"), style = MaterialTheme.typography.labelSmall)
                     LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(visible, key = { it.username }) { entry ->
-                            Column(Modifier.fillMaxWidth().clickable { openProfile(entry.username) }.padding(vertical = 12.dp)) {
+                        items(sortedVisible, key = { it.username }) { entry ->
+                            Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+                                Row {
+                                    Checkbox(checked = entry.username in selected, onCheckedChange = { checked ->
+                                        selected = if (checked) selected + entry.username else selected - entry.username
+                                    })
+                                    Column(Modifier.clickable { openProfile(entry.username) }) {
                                 Text(entry.display.ifBlank { entry.username }, fontWeight = FontWeight.SemiBold)
                                 Text("@${entry.username}", color = accent, style = MaterialTheme.typography.bodyMedium)
                                 if (entry.date.isNotBlank()) Text(entry.date, style = MaterialTheme.typography.bodySmall)
@@ -220,7 +285,8 @@ class MainActivity : ComponentActivity() {
                                         else -> t("Not reviewed • historical record", "İncelenmedi • geçmiş kayıt")
                                     }, style = MaterialTheme.typography.labelSmall
                                 )
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                }
+                                Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     TextButton(onClick = { openProfile(entry.username) }) { Text(t("Open profile", "Profili aç")) }
                                     TextButton(onClick = { copyUsername(entry.username) }) { Text(t("Copy", "Kopyala")) }
                                     TextButton(onClick = { setStatus(entry.username, if (statuses[entry.username] == "done") "" else "done") }) {
@@ -245,9 +311,9 @@ class MainActivity : ComponentActivity() {
                     title = { Text(t("Delete local data?", "Yerel veriler silinsin mi?")) },
                     text = { Text(t("All imported records and review statuses will be deleted from this device.", "Aktarılan kayıtlar ve inceleme durumları bu cihazdan silinecek.")) },
                     confirmButton = { TextButton(onClick = {
-                        saveEntries(emptyList())
-                        statuses = emptyMap()
-                        prefs.edit().remove("statuses").apply()
+                        store.clear()
+                        refresh()
+                        selected = emptySet()
                         confirmClear = false
                     }) { Text(t("Delete", "Sil")) } },
                     dismissButton = { TextButton(onClick = { confirmClear = false }) { Text(t("Cancel", "Vazgeç")) } }
