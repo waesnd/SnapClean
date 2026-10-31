@@ -251,7 +251,7 @@ class MainActivity : ComponentActivity() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Text(t("${selected.size} ${t("accounts selected", "hesap seçildi")}", style = MaterialTheme.typography.labelSmall)
+                    Text("${selected.size} " + t("accounts selected", "hesap seçildi"), style = MaterialTheme.typography.labelSmall)
                     Button(
                         onClick = {
                             val batch = sortedVisible.filter { it.username in selected && statuses[it.username].isNullOrEmpty() }.take(batchSize)
