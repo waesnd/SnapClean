@@ -1,22 +1,28 @@
-# SnapClean v0.1 — Android kaynak kodu
+# SnapClean
+An offline Android workspace for reviewing historical Snapchat friend-request exports.
 
-Bu proje Android Studio'da açılabilen Kotlin/Jetpack Compose başlangıç uygulamasıdır. APK **henüz derlenip cihazda test edilmemiştir**.
+## v2.0 beta
+- English and Turkish UI; language toggle and device-language default.
+- Dark interface, progress dashboard, search, and review filters.
+- Import Snapchat `friends.html` records; merge duplicate usernames.
+- Tap a username to open its public Snapchat profile URL; copy as fallback.
+- Manually mark records reviewed or skipped; persist locally between launches.
+- Clear local records and review state with confirmation.
+- No Snapchat credentials, no INTERNET permission, no server upload.
 
-## Özellikler
-- Snapchat veri dışa aktarımındaki `friends.html` dosyasının **Gönderilen Arkadaşlık İstekleri** bölümünü okur.
-- SQLite içinde kullanıcı adını tekil anahtar olarak tutar; tekrar içe aktarmada işaretlenen durumlar korunur.
-- Arama, filtreleme, kullanıcı adı kopyalama, manuel `İptal edildi` işaretleme ve geri alma.
-- Çevrimdışı; INTERNET izni yok; Snapchat parolası istemez.
+## Important limitations
+- Exported *historical* sent requests are not proof that a request is still pending.
+- Snapchat profile links may open in a browser or fail to resolve in the app.
+- No automatic cancellation, screen reading, or account automation.
+- The HTML parser recognizes a limited set of heading labels and table structures; real exports in other languages/layouts may not import correctly.
+- Local data is stored in app-private SharedPreferences, not an encrypted database. Large imports may be slow; this beta is not yet validated on a real export.
+- Not affiliated with, endorsed by, or sponsored by Snap Inc. Snapchat is a trademark of Snap Inc.
 
-## Kurulum
-1. Android Studio'da `SnapClean` klasörünü açın.
-2. Gradle eşitlemesini çalıştırın (Android SDK 35, JDK 17).
-3. `app` yapılandırmasını Android telefonda çalıştırın veya Build > Build APK(s) ile APK oluşturun.
-4. Uygulamada `friends.html içe aktar` düğmesiyle Snapchat dışa aktarım dosyasını seçin.
+## Build
+GitHub Actions: Actions → Build Android APK → Run workflow → download SnapClean-debug artifact (ZIP containing app-debug.apk).
 
-## Güvenlik ve sınırlamalar
-- `İptal edildi` düğmesi Snapchat'e komut göndermez; **yalnızca senin manuel doğrulamana dayanan yerel kayıt** oluşturur.
-- Uygulama mevcut Snapchat istek durumunu bilemez ve otomatik iptal yapmaz.
-- Veritabanı uygulamanın özel depolama alanındadır; uygulamayı kaldırınca veriler kaybolabilir.
-- HTML içe aktarma sırasında uygulama ana iş parçacığında çalışır; büyük dosyalarda kısa süreli donma görülebilir. Üretim sürümünde arka plan iş parçacığına taşınmalıdır.
-- Bu sürüm CSV, yedek dışa aktarma, toplu iptal veya erişilebilirlik otomasyonu içermez.
+## Privacy
+All imported data stays on-device. Do not commit private Snapchat export files to this public repository.
+
+## Roadmap
+Test import against redacted sample exports, migrate records to Room with background import, accessibility improvements, additional localizations, privacy policy, accessibility QA, release signing and Play Store readiness.
