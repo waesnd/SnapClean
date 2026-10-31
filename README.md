@@ -1,6 +1,13 @@
 # SnapClean
 An offline Android workspace for reviewing historical Snapchat friend-request exports.
 
+## v2.3 beta
+- Transactional SQLite storage with one-time migration from 2.2 SharedPreferences.
+- JSON backup and restore using Android document picker. Backups contain usernames and are not encrypted.
+- Date and username sorting, multi-select and bulk reviewed/skipped actions.
+- "Pending" renamed to "Unreviewed" to avoid implying Snapchat confirms live status.
+- No account login, automated friend removal, or private Snapchat API usage.
+
 ## v2.0 beta
 - English and Turkish UI; language toggle and device-language default.
 - Dark interface, progress dashboard, search, and review filters.
