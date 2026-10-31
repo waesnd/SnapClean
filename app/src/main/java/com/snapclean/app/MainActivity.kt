@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
             var importing by remember { mutableStateOf(false) }
             var sort by remember { mutableStateOf("newest") }
             var selected by remember { mutableStateOf(setOf<String>()) }
+            var batchSize by remember { mutableIntStateOf(5) }
 
             fun refresh() {
                 entries = store.all()
@@ -232,9 +233,14 @@ class MainActivity : ComponentActivity() {
                         Text(if (importing) t("Importing…", "İçe aktarılıyor…") else t("Import Snapchat HTML / ZIP", "Snapchat HTML / ZIP içe aktar"))
                     }
                     Spacer(Modifier.height(8.dp))
+                    Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(1, 5, 10, 25, 50, 100, 200).forEach { count ->
+                            FilterChip(selected = batchSize == count, onClick = { batchSize = count }, label = { Text("$count") })
+                        }
+                    }
                     Button(
                         onClick = {
-                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(5)
+                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(batchSize)
                             if (batch.isEmpty()) {
                                 message = t("No unreviewed records", "İncelenmemiş kayıt yok")
                             } else {
@@ -244,8 +250,8 @@ class MainActivity : ComponentActivity() {
                                     .putBoolean("running", true)
                                     .apply()
                                 message = t(
-                                    "Experimental five-account test prepared. Enable SnapClean accessibility access. The service may remove that account if Snapchat controls match.",
-                                    "Beş hesaplık deneysel test hazır. SnapClean erişilebilirlik iznini aç. Ekran kontrolleri eşleşirse o hesap kaldırılabilir."
+                                    "Experimental batch of ${batch.size} prepared. Enable SnapClean accessibility access if needed.",
+                                    "${batch.size} hesaplık deneysel parti hazır. Gerekirse SnapClean erişilebilirlik iznini aç."
                                 )
                                 val manager = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
                                 val enabled = manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
@@ -255,12 +261,12 @@ class MainActivity : ComponentActivity() {
                                     message = t("Enable SnapClean accessibility service once, then return and tap the test button.", "SnapClean erişilebilirlik servisini bir kez aç, geri dönüp test düğmesine tekrar bas.")
                                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                                 } else {
-                                    message = t("Accessibility active. Starting five-account test.", "Erişilebilirlik aktif. Beş hesaplık test başlatılıyor.")
+                                    message = t("Accessibility active. Starting ${batch.size}-account test.", "Erişilebilirlik aktif. ${batch.size} hesaplık test başlatılıyor.")
                                 }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(t("Prepare 5-account test", "5 hesaplık otomasyon testi")) }
+                    ) { Text(t("Start selected batch", "Seçilen partiyi başlat")) }
                     TextButton(onClick = {
                         getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                             .putBoolean("running", false).apply()
