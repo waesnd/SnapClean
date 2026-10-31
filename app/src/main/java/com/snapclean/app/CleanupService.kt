@@ -41,6 +41,8 @@ class CleanupService : AccessibilityService() {
         const val VERIFIED_TTL_MS = 120_000L
         const val MAX_DUMPS = 3
         const val MAX_DUMP_LINES = 250
+        const val HINT_BACKGROUND = " | Snapchat öne gelmedi: arka plandan uygulama açma engelli olabilir " +
+            "(HyperOS: Uygulama bilgisi > Diğer izinler > 'Arka planda açılan pencereleri göster' ve pil kısıtlamasını kapat)"
     }
 
     private enum class Step(val label: String, val timeoutMs: Long, val maxAttempts: Int) {
@@ -76,6 +78,7 @@ class CleanupService : AccessibilityService() {
     private var unknownSince = 0L
     private var profileDumped = false
     private var verifyReopened = false
+    private var launchRetried = false
     private var consecutiveReview = 0
     private var processed = 0
     private var skippedCount = 0
@@ -90,7 +93,9 @@ class CleanupService : AccessibilityService() {
     private var labels: Map<String, List<String>> = Labels.parse(null)
 
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "session_token" && prefs.getBoolean("running", false)) {
+        if (key == "capture_request") {
+            startCapture()
+        } else if (key == "session_token" && prefs.getBoolean("running", false)) {
             reload()
         } else if (key == "running" && !prefs.getBoolean("running", false) && running) {
             running = false
@@ -110,6 +115,39 @@ class CleanupService : AccessibilityService() {
             }
             if (running && mine == epoch && !tickScheduled) scheduleTick(TICK_MS)
         }
+    }
+
+    // ---------------------------------------------------------------- elle ekran kaydı
+    // Otomasyon çalışmadan, kullanıcı Snapchat'te gezerken ekranları kaydeder (hiçbir yere dokunmaz).
+
+    private val captureHandler = Handler(Looper.getMainLooper())
+    private var captureLeft = 0
+    private var lastCaptureSig = 0
+
+    private val captureRunnable = object : Runnable {
+        override fun run() {
+            if (captureLeft <= 0) return
+            captureLeft--
+            val s = readScreen()
+            if (s != null) {
+                val sig = s.nodes.filter { it.usable }.flatMap { it.rawLabels }.joinToString("|").hashCode()
+                if (sig != lastCaptureSig) {
+                    lastCaptureSig = sig
+                    dumpScreen("MANUEL", s, "manual_dumps", 8)
+                }
+            }
+            prefs.edit().putString("last_result", "Ekran kaydı: kalan ${captureLeft * 4} sn").apply()
+            if (captureLeft > 0) captureHandler.postDelayed(this, 4000L)
+            else prefs.edit().putString("last_result", "Ekran kaydı bitti").apply()
+        }
+    }
+
+    private fun startCapture() {
+        captureHandler.removeCallbacksAndMessages(null)
+        prefs.edit().remove("manual_dumps").apply()
+        lastCaptureSig = 0
+        captureLeft = 13
+        captureHandler.postDelayed(captureRunnable, 5000L)
     }
 
     // ---------------------------------------------------------------- yaşam döngüsü
@@ -156,6 +194,7 @@ class CleanupService : AccessibilityService() {
         prefs.edit().putBoolean("svc_connected", false).apply()
         epoch++
         cancelAll()
+        captureHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
@@ -210,6 +249,7 @@ class CleanupService : AccessibilityService() {
         attempts = 0
         profileVerified = false
         verifyReopened = false
+        launchRetried = false
         unknownSince = 0L
         profileDumped = false
         stepStartedAt = SystemClock.uptimeMillis()
@@ -222,7 +262,6 @@ class CleanupService : AccessibilityService() {
     private fun launchProfile(username: String): Boolean = try {
         startActivity(
             Intent(Intent.ACTION_VIEW, Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username)))
-                .setPackage(SNAP)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
         true
@@ -266,7 +305,14 @@ class CleanupService : AccessibilityService() {
         refreshLabels()
         val screen = readScreen()
         if (screen == null) {
-            stepWait(username, now, null, lastReadIssue)
+            val notFront = lastReadIssue.startsWith("Snapchat ekranda değil")
+            if (step == Step.PROFILE && notFront && !launchRetried && now - stepStartedAt > 6000L) {
+                launchRetried = true
+                status("Snapchat öne gelmedi; bağlantı bir kez daha gönderiliyor: $username")
+                launchProfile(username)
+                return
+            }
+            stepWait(username, now, null, if (notFront) lastReadIssue + HINT_BACKGROUND else lastReadIssue)
             return
         }
         publishRead(screen, now)
@@ -283,18 +329,20 @@ class CleanupService : AccessibilityService() {
                 if (attempts >= step.maxAttempts) { failStep(username, "üç nokta menüsü $attempts denemede açılmadı", screen); return }
                 if (attempts == 0) dumpScreen("MENU-ONCESI", screen)
                 // Önceki deneme yanlış bir yere dokunduysa (paylaşım sayfası vb.) geri dön.
-                if (attempts > 0 && !usernameVisible(nodes, username)) {
+                if (attempts > 0 && !profileUsernameVisible(nodes, username)) {
                     performGlobalAction(GLOBAL_ACTION_BACK)
                     lastActionAt = now
                     status("Beklenmeyen ekran, geri dönülüyor")
                     return
                 }
-                val actionMenu = nodes.filter { it.usable && it.viewId.substringAfterLast("/") == "unified_profile_icon_button_action_menu" }
+                val byId = findByViewId(nodes, lbl("overflowid"))
                 val byLabel = findExact(nodes, lbl("overflow"))
                 val dm = resources.displayMetrics
-                val targets: List<UiNode> = if (actionMenu.size == 1) actionMenu
-                else if (byLabel is Match.One) listOf(byLabel.node)
-                else overflowCandidates(nodes, 0, 0, dm.widthPixels, dm.heightPixels)
+                val targets: List<UiNode> = when {
+                    byId is Match.One -> listOf(byId.node)
+                    byLabel is Match.One -> listOf(byLabel.node)
+                    else -> overflowCandidates(nodes, 0, 0, dm.widthPixels, dm.heightPixels)
+                }
                 if (targets.isEmpty()) {
                     attempts++
                     lastActionAt = now
@@ -340,18 +388,6 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun onProfile(username: String, now: Long, screen: Screen) {
-        // Snapchat explicitly states that this profile is already a friend; never remove it as a pending request.
-        val friendSince = screen.nodes.any { node ->
-            val value = fold(node.text + " " + node.desc)
-            (value.contains("tarihinden beri arkadas") || value.contains("friends since") || value.contains("friend since"))
-        }
-        if (usernameVisible(screen.nodes, username) && friendSince) {
-            addFailed(username, "Mevcut arkadaşlık doğrulandı; otomatik kaldırma yapılmadı")
-            reviewCount++
-            status("Mevcut arkadaş, dokunulmadı: $username")
-            advanceAfter(1200L, 2200L)
-            return
-        }
         when (classifyProfile(screen.nodes, username, labels)) {
             ProfileVerdict.USERNAME_MISSING -> {
                 unknownSince = 0L
@@ -360,6 +396,13 @@ class CleanupService : AccessibilityService() {
                     dumpScreen("PROFIL-OKUNAMADI", screen)
                 }
                 stepWait(username, now, screen, "kullanıcı adı ağaçta görünmüyor; görülen: " + sample(screen.nodes))
+            }
+            ProfileVerdict.MUTUAL_FRIEND -> {
+                markStatus(username, "skipped")
+                skippedCount++
+                consecutiveReview = 0
+                status("Karşılıklı arkadaş, DOKUNULMADI: $username")
+                advanceAfter(1200L, 2200L)
             }
             ProfileVerdict.NOT_FRIEND_ADD -> {
                 markStatus(username, "skipped")
@@ -461,7 +504,9 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun verifySuccess(nodes: List<UiNode>, username: String) =
-        usernameVisible(nodes, username) && isPresent(nodes, lbl("add"))
+        profileUsernameVisible(nodes, username) &&
+            !containsAny(nodes, lbl("friendsince")) &&
+            isPresent(nodes, lbl("add"))
 
     /** Etiketle bulunan tek bir düğmeye basar; belirsizse (birden fazla) güvenle durur. */
     private fun actOnLabel(username: String, now: Long, screen: Screen, key: String, what: String) {
@@ -661,7 +706,7 @@ class CleanupService : AccessibilityService() {
         ).apply()
     }
 
-    private fun dumpScreen(tag: String, screen: Screen?) {
+    private fun dumpScreen(tag: String, screen: Screen?, key: String = "dumps", keep: Int = MAX_DUMPS) {
         val sb = StringBuilder()
         sb.append("=== ").append(tag).append(" | ").append(stamp()).append(" | sürüm ").append(buildTag())
             .append(" | ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
@@ -688,8 +733,8 @@ class CleanupService : AccessibilityService() {
                     .append('|').append(x.left).append(',').append(x.top).append(',').append(x.right).append(',').append(x.bottom).append('\n')
             }
         }
-        val old = prefs.getString("dumps", "").orEmpty()
+        val old = prefs.getString(key, "").orEmpty()
         val parts = (if (old.isEmpty()) emptyList() else old.split("\u0001")) + sb.toString()
-        prefs.edit().putString("dumps", parts.takeLast(MAX_DUMPS).joinToString("\u0001")).apply()
+        prefs.edit().putString(key, parts.takeLast(keep).joinToString("\u0001")).apply()
     }
 }
