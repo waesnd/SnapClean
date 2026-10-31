@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
             var sort by remember { mutableStateOf("newest") }
             var selected by remember { mutableStateOf(setOf<String>()) }
             var batchSize by remember { mutableIntStateOf(5) }
+            var customBatch by remember { mutableStateOf("5") }
 
             fun refresh() {
                 entries = store.all()
@@ -235,14 +236,27 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(8.dp))
                     Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(1, 5, 10, 25, 50, 100, 200).forEach { count ->
-                            FilterChip(selected = batchSize == count, onClick = { batchSize = count }, label = { Text("$count") })
+                            FilterChip(selected = batchSize == count, onClick = { batchSize = count; customBatch = count.toString() }, label = { Text("$count") })
                         }
                     }
+                    OutlinedTextField(
+                        value = customBatch,
+                        onValueChange = { value ->
+                            if (value.length <= 3 && value.all { it.isDigit() }) {
+                                customBatch = value
+                                batchSize = value.toIntOrNull() ?: 0
+                            }
+                        },
+                        label = { Text(t("Custom account limit (1–200)", "Özel hesap limiti (1–200)")) },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(t("${selected.size} ${t("accounts selected", "hesap seçildi")}", style = MaterialTheme.typography.labelSmall)
                     Button(
                         onClick = {
-                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(batchSize)
+                            val batch = sortedVisible.filter { it.username in selected && statuses[it.username].isNullOrEmpty() }.take(batchSize)
                             if (batch.isEmpty()) {
-                                message = t("No unreviewed records", "İncelenmemiş kayıt yok")
+                                message = t("Select unreviewed accounts using the checkboxes first.", "Önce kutucuklardan incelenmemiş hesapları seç.")
                             } else {
                                 getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                                     .putString("names", batch.joinToString("\n") { it.username })
@@ -265,8 +279,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
+                        enabled = selected.isNotEmpty() && batchSize in 1..200,
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(t("Start selected batch", "Seçilen partiyi başlat")) }
+                    ) { Text(t("Start selected batch", "Seçilen hesapları başlat")) }
                     TextButton(onClick = {
                         getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                             .putBoolean("running", false).apply()
