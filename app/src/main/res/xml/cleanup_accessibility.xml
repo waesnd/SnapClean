@@ -4,4 +4,5 @@
     android:accessibilityFeedbackType="feedbackGeneric"
     android:notificationTimeout="250"
     android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
     android:description="@string/cleanup_accessibility_description" />
