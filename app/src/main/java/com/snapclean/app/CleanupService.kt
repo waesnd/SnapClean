@@ -259,14 +259,27 @@ class CleanupService : AccessibilityService() {
         scheduleTick(1500L)
     }
 
-    private fun launchProfile(username: String): Boolean = try {
-        startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username)))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-        true
-    } catch (e: Exception) {
-        false
+    private fun launchProfile(username: String): Boolean {
+        val uri = Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username))
+        // Prefer Snapchat's own deep-link handler over a browser or chooser.
+        val direct = Intent(Intent.ACTION_VIEW, uri)
+            .setPackage(SNAP)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return try {
+            startActivity(direct)
+            true
+        } catch (_: Exception) {
+            // Some Snapchat releases do not expose an ACTION_VIEW handler.
+            // Never fall back to an unqualified URL: it can open the browser.
+            val launch = packageManager.getLaunchIntentForPackage(SNAP) ?: return false
+            try {
+                startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                status("Snapchat açıldı; profil bağlantısı desteklenmiyor: $username")
+                true
+            } catch (_: Exception) {
+                false
+            }
+        }
     }
 
     private fun advanceAfter(minMs: Long, maxMs: Long) {
@@ -309,7 +322,10 @@ class CleanupService : AccessibilityService() {
             if (step == Step.PROFILE && notFront && !launchRetried && now - stepStartedAt > 6000L) {
                 launchRetried = true
                 status("Snapchat öne gelmedi; bağlantı bir kez daha gönderiliyor: $username")
-                launchProfile(username)
+                if (!launchProfile(username)) {
+                    failCurrent("Snapchat uygulaması başlatılamadı: $username")
+                    return
+                }
                 return
             }
             stepWait(username, now, null, if (notFront) lastReadIssue + HINT_BACKGROUND else lastReadIssue)
@@ -574,6 +590,12 @@ class CleanupService : AccessibilityService() {
         }
         if (roots.isEmpty()) {
             lastReadIssue = "ağaç boş: rootInActiveWindow=null, pencere sayısı=$windowCount"
+            return null
+        }
+        // A cached/background Snapchat window is not proof it is foreground.
+        val activePackage = active?.packageName?.toString()
+        if (activePackage != SNAP) {
+            lastReadIssue = "Snapchat ekranda değil; aktif paket: " + (activePackage ?: "?")
             return null
         }
         val snap = roots.filter { it.packageName?.toString() == SNAP }
