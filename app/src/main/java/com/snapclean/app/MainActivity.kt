@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
@@ -73,10 +74,16 @@ class MainActivity : ComponentActivity() {
             val cleanupPrefs = remember { getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE) }
             var automationResult by remember { mutableStateOf(cleanupPrefs.getString("last_result", "").orEmpty()) }
             var automationRunning by remember { mutableStateOf(cleanupPrefs.getBoolean("running", false)) }
+            var dryRun by remember { mutableStateOf(cleanupPrefs.getBoolean("dry_run", true)) }
+            var labelsText by remember { mutableStateOf(cleanupPrefs.getString("labels", null) ?: Labels.defaultText()) }
+            var serviceText by remember { mutableStateOf("") }
+            var failedText by remember { mutableStateOf(cleanupPrefs.getString("failed", "").orEmpty()) }
             LaunchedEffect(Unit) {
                 while (true) {
                     automationResult = cleanupPrefs.getString("last_result", "").orEmpty()
                     automationRunning = cleanupPrefs.getBoolean("running", false)
+                    failedText = cleanupPrefs.getString("failed", "").orEmpty()
+                    serviceText = describeService(cleanupPrefs, language == "tr")
                     delay(800L)
                 }
             }
@@ -122,6 +129,11 @@ class MainActivity : ComponentActivity() {
                 (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
                     .setPrimaryClip(ClipData.newPlainText("SnapClean username", username))
                 message = t("Username copied", "Kullanıcı adı kopyalandı")
+            }
+            fun copyText(label: String, text: String, doneMessage: String) {
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
+                    .setPrimaryClip(ClipData.newPlainText(label, text))
+                message = doneMessage
             }
             fun openProfile(username: String) {
                 val url = "https://www.snapchat.com/add/" + Uri.encode(username)
@@ -274,6 +286,7 @@ class MainActivity : ComponentActivity() {
                                     .putString("names", batch.joinToString("\n") { it.username })
                                     .putInt("index", 0)
                                     .putBoolean("running", true)
+                                    .putLong("session_started_at", System.currentTimeMillis())
                                     .putLong("session_token", System.nanoTime())
                                     .apply()
                                 message = t(
@@ -300,6 +313,62 @@ class MainActivity : ComponentActivity() {
                             .putBoolean("running", false).apply()
                         message = t("Automation stopped", "Otomasyon durduruldu")
                     }) { Text(t("Stop automation", "Otomasyonu durdur")) }
+                    Spacer(Modifier.height(8.dp))
+                    Card(colors = CardDefaults.cardColors(containerColor = surface), shape = RoundedCornerShape(18.dp)) {
+                        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                            Text(t("Automation status", "Otomasyon durumu"), style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                if (automationRunning) t("Running", "Çalışıyor") else t("Idle", "Beklemede"),
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(automationResult.ifBlank { t("No status yet", "Henüz durum yok") }, style = MaterialTheme.typography.bodySmall)
+                            Spacer(Modifier.height(6.dp))
+                            Text(serviceText, style = MaterialTheme.typography.labelSmall)
+                            Spacer(Modifier.height(8.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Switch(checked = dryRun, onCheckedChange = {
+                                    dryRun = it
+                                    cleanupPrefs.edit().putBoolean("dry_run", it).apply()
+                                })
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    if (dryRun) t("Dry run ON: nothing is removed", "Kuru çalıştırma AÇIK: hiçbir şey silinmez")
+                                    else t("Dry run OFF: friends WILL be removed", "Kuru çalıştırma KAPALI: hesaplar GERÇEKTEN silinir"),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            if (failedText.isNotBlank()) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(t("Failed / not touched:", "Başarısız / dokunulmayan:"), style = MaterialTheme.typography.labelMedium)
+                                Text(failedText.take(900), style = MaterialTheme.typography.bodySmall)
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(onClick = {
+                                    val header = serviceText + "\n" + automationResult + "\n--- LOG ---\n" + cleanupPrefs.getString("log", "").orEmpty() +
+                                        "\n--- BASARISIZ ---\n" + cleanupPrefs.getString("failed", "").orEmpty() +
+                                        "\n--- EKRAN DOKUMLERI ---\n" + cleanupPrefs.getString("dumps", "").orEmpty().replace("\u0001", "\n\n")
+                                    copyText("SnapClean diagnostics", header, t("Diagnostics copied", "Teşhis panoya kopyalandı"))
+                                }) { Text(t("Copy diagnostics", "Teşhisi kopyala")) }
+                                OutlinedButton(onClick = {
+                                    cleanupPrefs.edit().remove("labels").apply()
+                                    labelsText = Labels.defaultText()
+                                    message = t("Labels reset", "Etiketler sıfırlandı")
+                                }) { Text(t("Reset labels", "Etiketleri sıfırla")) }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = labelsText,
+                                onValueChange = {
+                                    labelsText = it
+                                    cleanupPrefs.edit().putString("labels", it).apply()
+                                },
+                                label = { Text(t("Advanced labels (key=a,b)", "Gelişmiş etiketler (anahtar=a,b)")) },
+                                minLines = 6,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = query, onValueChange = { query = it },
@@ -466,4 +535,17 @@ internal fun parseSnapchatExport(html: String): List<RequestEntry> {
             else RequestEntry(username, cells[1].text(), cells.getOrNull(2)?.text() ?: "")
         }
     }.distinctBy { it.username.lowercase(Locale.ROOT) }
+}
+
+private fun describeService(p: android.content.SharedPreferences, tr: Boolean): String {
+    val connected = p.getBoolean("svc_connected", false)
+    val last = p.getLong("svc_last_event", 0L)
+    val ago = if (last == 0L) "-" else "${(System.currentTimeMillis() - last) / 1000} " + (if (tr) "sn önce" else "s ago")
+    val state = if (tr) (if (connected) "bağlı" else "BAĞLI DEĞİL") else (if (connected) "connected" else "NOT CONNECTED")
+    val read = p.getString("svc_last_read", "").orEmpty()
+    val build = p.getString("svc_build", "").orEmpty()
+    return (if (tr) "Servis: " else "Service: ") + state + " • " +
+        (if (tr) "son Snapchat olayı: " else "last Snapchat event: ") + ago +
+        (if (build.isNotEmpty()) " • v$build" else "") +
+        (if (read.isNotEmpty()) "\n$read" else "")
 }
