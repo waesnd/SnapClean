@@ -28,6 +28,7 @@ class CleanupService : AccessibilityService() {
     private var startedAt = 0L
     private var session = 0
     private var verifiedProfile = false
+    private var movingToNext = false
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "running" && prefs.getBoolean("running", false) && !running) reload()
         else if (key == "running" && !prefs.getBoolean("running", false)) running = false
@@ -67,6 +68,7 @@ class CleanupService : AccessibilityService() {
         if (!running || !prefs.getBoolean("running", false)) { stop("Durduruldu"); return }
         if (index >= names.size) { stop("Parti tamamlandı"); return }
         step = Step.PROFILE
+        movingToNext = false
         verifiedProfile = false
         startedAt = android.os.SystemClock.uptimeMillis()
         lastAction = startedAt
@@ -134,7 +136,7 @@ class CleanupService : AccessibilityService() {
                 if (!usernameFound) return
                 verifiedProfile = true
                 if (texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
-                    index++; persist(); openNext(); return
+                    if (!movingToNext) { movingToNext = true; index++; persist(); openNext() }; return
                 }
                 // Menu icon is often exposed as "More"/"More options".
                 if (tap(nodes, "Diğer seçenekler", "Daha fazla", "More options", "More")) advance(Step.MENU)
@@ -153,10 +155,11 @@ class CleanupService : AccessibilityService() {
             }
             Step.CONFIRM -> Unit
             Step.VERIFY -> {
-                if (usernameFound && texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
+                if (!movingToNext && usernameFound && texts.any { it.equals("Ekle", true) || it.equals("Add", true) }) {
+                    movingToNext = true
                     RequestStore(this).use { it.status(username, "done") }
                     index++; persist()
-                    handler.postDelayed({ openNext() }, 1200L)
+                    handler.postDelayed({ if (running) openNext() }, 1200L)
                 } else if (now - lastAction > 9000L) stop("Ekle doğrulaması başarısız: $username")
             }
         }
