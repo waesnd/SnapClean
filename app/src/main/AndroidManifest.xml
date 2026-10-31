@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:label="SnapClean" android:icon="@drawable/ic_snapclean" android:roundIcon="@drawable/ic_snapclean" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+    <queries>\n        <package android:name="com.snapchat.android"/>\n    </queries>\n    <application android:label="SnapClean" android:icon="@drawable/ic_snapclean" android:roundIcon="@drawable/ic_snapclean" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
