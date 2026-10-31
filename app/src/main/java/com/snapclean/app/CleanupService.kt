@@ -96,7 +96,7 @@ class CleanupService : AccessibilityService() {
     private var labels: Map<String, List<String>> = Labels.parse(null)
 
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "manual_profile_request") {
+        if (key == "manual_profile_token") {
             startManualProfileSearch()
         } else if (key == "capture_request") {
             startCapture()
@@ -187,13 +187,11 @@ class CleanupService : AccessibilityService() {
         searchStage = 0
         searchActionAt = 0L
         stepStartedAt = manualProfileStarted
-        val launch = packageManager.getLaunchIntentForPackage(SNAP)
-        if (launch == null) {
-            prefs.edit().putString("last_result", "Snapchat bulunamadı").apply()
+        if (!launchProfile(username)) {
+            prefs.edit().putString("last_result", "Snapchat başlatılamadı; uygulama yüklü mü?").apply()
+            manualProfileName = ""
             return
         }
-        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        startActivity(launch)
         manualProfileHandler.postDelayed(manualProfileRunnable, 1300L)
     }
 
@@ -311,14 +309,18 @@ class CleanupService : AccessibilityService() {
         scheduleTick(1500L)
     }
 
-    private fun launchProfile(username: String): Boolean = try {
-        startActivity(
-            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username)))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-        true
-    } catch (e: Exception) {
-        false
+    private fun launchProfile(username: String): Boolean {
+        // Snapchat /add links may open the camera or show an invalid-link error.
+        // Open the app itself and let the verified in-app search find the profile.
+        val launch = packageManager.getLaunchIntentForPackage(SNAP) ?: return false
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        return try {
+            startActivity(launch)
+            true
+        } catch (e: Exception) {
+            appendLog("Snapchat başlatılamadı: " + e.javaClass.simpleName)
+            false
+        }
     }
 
     private fun advanceAfter(minMs: Long, maxMs: Long) {
