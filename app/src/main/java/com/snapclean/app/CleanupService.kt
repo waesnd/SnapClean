@@ -8,6 +8,7 @@ import android.content.SharedPreferences
 import android.graphics.Path
 import android.graphics.Rect
 import android.net.Uri
+import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -46,7 +47,7 @@ class CleanupService : AccessibilityService() {
     }
 
     private enum class Step(val label: String, val timeoutMs: Long, val maxAttempts: Int) {
-        PROFILE("profil", 22_000L, 0),
+        PROFILE("profil", 35_000L, 0),
         OPEN_MENU("üç nokta menüsü", 16_000L, 4),
         MANAGE("Arkadaşlığı Yönet", 10_000L, 3),
         REMOVE_FRIEND("Arkadaşı Sil", 10_000L, 3),
@@ -79,6 +80,8 @@ class CleanupService : AccessibilityService() {
     private var profileDumped = false
     private var verifyReopened = false
     private var launchRetried = false
+    private var searchStage = 0
+    private var searchActionAt = 0L
     private var consecutiveReview = 0
     private var processed = 0
     private var skippedCount = 0
@@ -250,6 +253,8 @@ class CleanupService : AccessibilityService() {
         profileVerified = false
         verifyReopened = false
         launchRetried = false
+        searchStage = 0
+        searchActionAt = 0L
         unknownSince = 0L
         profileDumped = false
         stepStartedAt = SystemClock.uptimeMillis()
@@ -322,7 +327,10 @@ class CleanupService : AccessibilityService() {
         val nodes = screen.nodes
 
         when (step) {
-            Step.PROFILE -> onProfile(username, now, screen)
+            Step.PROFILE -> {
+                if (profileUsernameVisible(nodes, username)) onProfile(username, now, screen)
+                else if (!searchForProfile(username, now, screen)) onProfile(username, now, screen)
+            }
 
             Step.OPEN_MENU -> {
                 if (!requireVerified(username, screen)) return
@@ -388,6 +396,66 @@ class CleanupService : AccessibilityService() {
                 } else status("Silme doğrulanıyor: $username (${waited / 1000} sn)")
             }
         }
+    }
+
+    /**
+     * Snapchat may route /add/{username} to the camera rather than the requested profile.
+     * Search through the app UI, but never tap an ambiguous user result.
+     */
+    private fun searchForProfile(username: String, now: Long, screen: Screen): Boolean {
+        val nodes = screen.nodes
+        if (now - searchActionAt < 1300L) return true
+        if (searchStage == 0) {
+            val search = nodes.firstOrNull {
+                it.usable && (it.viewId.endsWith("/hova_header_search_icon") ||
+                    it.rawLabels.any { label -> fold(label) == fold("Ara") || fold(label) == fold("Search") })
+            }
+            if (search != null && tapNode(screen, search, false)) {
+                searchStage = 1
+                searchActionAt = now
+                status("Bağlantı profil açmadı; Snapchat aramasına geçiliyor: $username")
+                return true
+            }
+            return false
+        }
+        if (searchStage == 1) {
+            val editable = nodes.mapNotNull { n ->
+                val ref = screen.refs.getOrNull(n.index)
+                if (n.usable && ref?.isEditable == true) n to ref else null
+            }
+            if (editable.size == 1) {
+                val args = Bundle().apply {
+                    putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, username)
+                }
+                if (editable[0].second.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) {
+                    searchStage = 2
+                    searchActionAt = now
+                    status("Kullanıcı aranıyor: $username")
+                }
+                return true
+            }
+            if (now - stepStartedAt > 12000L) {
+                failStep(username, "Snapchat arama kutusu tekil olarak bulunamadı", screen)
+            }
+            return true
+        }
+        if (searchStage == 2) {
+            // Exact username alone in the search field is not a search result.
+            val matches = nodes.filter { n ->
+                n.usable && n.rawLabels.any { fold(it) == fold(username) } &&
+                    screen.refs.getOrNull(n.index)?.isEditable != true
+            }
+            if (matches.size == 1 && tapNode(screen, matches[0], false)) {
+                searchStage = 3
+                searchActionAt = now
+                status("Arama sonucu açılıyor: $username")
+            } else if (matches.size > 1) {
+                failStep(username, "Arama sonuçlarında birden fazla aynı kullanıcı adı var; dokunulmadı", screen)
+            }
+            return true
+        }
+        // Wait for the verified profile; never guess a different result.
+        return true
     }
 
     private fun onProfile(username: String, now: Long, screen: Screen) {
