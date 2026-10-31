@@ -347,9 +347,20 @@ class MainActivity : ComponentActivity() {
                                 OutlinedButton(onClick = {
                                     val header = serviceText + "\n" + automationResult + "\n--- LOG ---\n" + cleanupPrefs.getString("log", "").orEmpty() +
                                         "\n--- BASARISIZ ---\n" + cleanupPrefs.getString("failed", "").orEmpty() +
-                                        "\n--- EKRAN DOKUMLERI ---\n" + cleanupPrefs.getString("dumps", "").orEmpty().replace("\u0001", "\n\n")
+                                        "\n--- EKRAN DOKUMLERI ---\n" + cleanupPrefs.getString("dumps", "").orEmpty().replace("\u0001", "\n\n") +
+                                        "\n--- MANUEL KAYITLAR ---\n" + cleanupPrefs.getString("manual_dumps", "").orEmpty().replace("\u0001", "\n\n")
                                     copyText("SnapClean diagnostics", header, t("Diagnostics copied", "Teşhis panoya kopyalandı"))
                                 }) { Text(t("Copy diagnostics", "Teşhisi kopyala")) }
+                                OutlinedButton(onClick = {
+                                    cleanupPrefs.edit().putLong("capture_request", System.nanoTime()).apply()
+                                    message = t(
+                                        "Switch to Snapchat now. Screens are recorded for ~50 s; nothing is tapped.",
+                                        "Şimdi Snapchat'e geç. ~50 sn boyunca ekranlar kaydedilir; hiçbir yere dokunulmaz."
+                                    )
+                                }) { Text(t("Record screens (50 s)", "Ekranları kaydet (50 sn)")) }
+                                OutlinedButton(onClick = {
+                                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+                                }) { Text(t("App permissions", "Uygulama izinleri")) }
                                 OutlinedButton(onClick = {
                                     cleanupPrefs.edit().remove("labels").apply()
                                     labelsText = Labels.defaultText()
