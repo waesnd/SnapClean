@@ -54,7 +54,7 @@ class AutomationLogicTest {
 
     @Test fun classifyProfileGate() {
         val user = node(text = "sample_user", index = 0)
-        val add = node(text = "Ekle", index = 1)
+        val add = node(text = "Ekle", index = 1, id = "com.snapchat.android:id/non_friend_action_button_single")
         val pending = node(text = "Beklemede", index = 2)
         assertEquals(ProfileVerdict.USERNAME_MISSING, classifyProfile(listOf(add), "sample_user", labels))
         assertEquals(ProfileVerdict.NOT_FRIEND_ADD, classifyProfile(listOf(user, add), "sample_user", labels))
@@ -63,6 +63,18 @@ class AutomationLogicTest {
         assertEquals(ProfileVerdict.UNKNOWN_STATE, classifyProfile(listOf(user, node(text = "Sohbet")), "sample_user", labels))
         // Hem Ekle hem bekleyen görünüyorsa güvenli taraf: Ekle (atla).
         assertEquals(ProfileVerdict.NOT_FRIEND_ADD, classifyProfile(listOf(user, add, pending), "sample_user", labels))
+    }
+
+    @Test fun suggestedAddButtonDoesNotOverridePendingStatus() {
+        val user = node(text = "sample_user", index = 0,
+            id = "com.snapchat.android:id/profile_identity_section_username")
+        val suggestionAdd = node(text = "Ekle", index = 1,
+            id = "com.snapchat.android:id/suggestion_add_button")
+        val pending = node(text = "Beklemede", index = 2)
+        assertEquals(ProfileVerdict.PENDING_OK,
+            classifyProfile(listOf(user, suggestionAdd, pending), "sample_user", labels))
+        assertEquals(ProfileVerdict.UNKNOWN_STATE,
+            classifyProfile(listOf(user, suggestionAdd), "sample_user", labels))
     }
 
     @Test fun overflowCandidatesPickTopRightIcons() {
