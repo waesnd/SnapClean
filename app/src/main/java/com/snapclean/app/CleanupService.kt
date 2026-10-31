@@ -259,21 +259,14 @@ class CleanupService : AccessibilityService() {
         scheduleTick(1500L)
     }
 
-    private fun launchProfile(username: String): Boolean {
-        val uri = Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username))
-        // Prefer Snapchat's own deep-link handler over a browser or chooser.
-        val direct = Intent(Intent.ACTION_VIEW, uri)
-            .setPackage(SNAP)
-            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        return try {
-            startActivity(direct)
-            true
-        } catch (_: Exception) {
-            // Some Snapchat releases do not expose an ACTION_VIEW handler.
-            // Never fall back to an unqualified URL: it can open the browser.
-            // Opening the Snapchat camera is not equivalent to opening this user's profile.
-            false
-        }
+    private fun launchProfile(username: String): Boolean = try {
+        startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://www.snapchat.com/add/" + Uri.encode(username)))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        true
+    } catch (e: Exception) {
+        false
     }
 
     private fun advanceAfter(minMs: Long, maxMs: Long) {
