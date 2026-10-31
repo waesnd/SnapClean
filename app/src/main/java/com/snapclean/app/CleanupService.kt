@@ -96,7 +96,9 @@ class CleanupService : AccessibilityService() {
     private var labels: Map<String, List<String>> = Labels.parse(null)
 
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "capture_request") {
+        if (key == "manual_profile_request") {
+            startManualProfileSearch()
+        } else if (key == "capture_request") {
             startCapture()
         } else if (key == "session_token" && prefs.getBoolean("running", false)) {
             reload()
@@ -153,6 +155,48 @@ class CleanupService : AccessibilityService() {
         captureHandler.postDelayed(captureRunnable, 5000L)
     }
 
+    private val manualProfileHandler = Handler(Looper.getMainLooper())
+    private var manualProfileName = ""
+    private var manualProfileStarted = 0L
+    private val manualProfileRunnable = object : Runnable {
+        override fun run() {
+            if (running || manualProfileName.isEmpty()) return
+            val screen = readScreen()
+            val now = SystemClock.uptimeMillis()
+            if (screen != null && profileUsernameVisible(screen.nodes, manualProfileName)) {
+                prefs.edit().putString("last_result", "Profil bulundu: $manualProfileName").apply()
+                manualProfileName = ""
+                return
+            }
+            if (now - manualProfileStarted > 30000L) {
+                prefs.edit().putString("last_result", "Profil açılamadı: $manualProfileName (arama sonucu doğrulanamadı)").apply()
+                manualProfileName = ""
+                return
+            }
+            if (screen != null) searchForProfile(manualProfileName, now, screen)
+            if (manualProfileName.isNotEmpty()) manualProfileHandler.postDelayed(this, 800L)
+        }
+    }
+
+    private fun startManualProfileSearch() {
+        val username = prefs.getString("manual_profile_request", "").orEmpty().trim()
+        if (username.isEmpty() || running) return
+        manualProfileHandler.removeCallbacksAndMessages(null)
+        manualProfileName = username
+        manualProfileStarted = SystemClock.uptimeMillis()
+        searchStage = 0
+        searchActionAt = 0L
+        stepStartedAt = manualProfileStarted
+        val launch = packageManager.getLaunchIntentForPackage(SNAP)
+        if (launch == null) {
+            prefs.edit().putString("last_result", "Snapchat bulunamadı").apply()
+            return
+        }
+        launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        startActivity(launch)
+        manualProfileHandler.postDelayed(manualProfileRunnable, 1300L)
+    }
+
     // ---------------------------------------------------------------- yaşam döngüsü
 
     override fun onServiceConnected() {
@@ -198,6 +242,7 @@ class CleanupService : AccessibilityService() {
         epoch++
         cancelAll()
         captureHandler.removeCallbacksAndMessages(null)
+        manualProfileHandler.removeCallbacksAndMessages(null)
         super.onDestroy()
     }
 
@@ -227,6 +272,8 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun reload() {
+        manualProfileHandler.removeCallbacksAndMessages(null)
+        manualProfileName = ""
         cancelAll()
         epoch++
         names = prefs.getString("names", "").orEmpty().split("\n").map { it.trim() }
