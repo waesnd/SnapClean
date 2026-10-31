@@ -141,7 +141,7 @@ class MainActivity : ComponentActivity() {
                     message = t("Enable accessibility service first. Username copied.", "Önce erişilebilirlik servisini aç. Kullanıcı adı kopyalandı.")
                     return
                 }
-                cleanupPrefs.edit().putString("manual_profile_request", username).apply()
+                cleanupPrefs.edit().putString("manual_profile_request", username)\n                    .putLong("manual_profile_token", System.nanoTime()).apply()
                 message = t("Searching in Snapchat: $username", "Snapchat içinde aranıyor: $username")
             }
 
