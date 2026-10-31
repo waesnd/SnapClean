@@ -26,6 +26,7 @@ import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.text.Normalizer
 import java.util.zip.ZipInputStream
 import java.io.BufferedInputStream
 import java.io.ByteArrayOutputStream
@@ -267,6 +268,13 @@ private fun loadStatuses(raw: String): Map<String, String> = try {
     obj.keys().asSequence().associateWith { obj.optString(it) }
 } catch (e: Exception) { emptyMap() }
 
+private fun normalizeHeading(value: String): String {
+    val turkishAware = value.trim().lowercase(Locale.forLanguageTag("tr-TR"))
+    return Normalizer.normalize(turkishAware, Normalizer.Form.NFD)
+        .replace(Regex("\\p{M}+"), "")
+        .replace(Regex("\\s+"), " ")
+}
+
 private fun diagnoseSnapchatExport(html: String): String {
     val doc = Jsoup.parse(html)
     val headings = doc.select("h1,h2,h3,h4,h5").map { it.text().take(55) }
@@ -282,8 +290,8 @@ private fun parseSnapchatExport(html: String): List<RequestEntry> {
         "gesendete freundschaftsanfragen", "solicitudes de amistad enviadas"
     )
     val heading = doc.select("h1,h2,h3,h4,h5").firstOrNull { element ->
-        val normalized = element.text().trim().lowercase(Locale.ROOT)
-        keywords.any { normalized.contains(it) }
+        val normalized = normalizeHeading(element.text())
+        keywords.any { normalized.contains(normalizeHeading(it)) }
     }
     val table = if (heading != null) {
         // The actual Snapchat export places the target table immediately after
@@ -304,8 +312,8 @@ private fun parseSnapchatExport(html: String): List<RequestEntry> {
     // tables, which could mix blocked and removed users into sent requests.
     val selected = table ?: doc.select("table").firstOrNull { candidate ->
         val previous = candidate.previousElementSibling()
-        val context = previous?.text()?.lowercase(Locale.ROOT) ?: ""
-        keywords.any { context.contains(it) }
+        val context = normalizeHeading(previous?.text() ?: "")
+        keywords.any { context.contains(normalizeHeading(it)) }
     } ?: return emptyList()
 
     return selected.select("tr").mapNotNull { row ->
