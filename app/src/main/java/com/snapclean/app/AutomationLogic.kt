@@ -95,7 +95,36 @@ fun usernameVisible(nodes: List<UiNode>, username: String): Boolean {
     }
 }
 
-enum class ProfileVerdict { USERNAME_MISSING, NOT_FRIEND_ADD, PENDING_OK, UNKNOWN_STATE }
+/** Etiketi verilen parçalardan birini İÇEREN görünür düğüm var mı? (ör. "... tarihinden beri arkadaş") */
+fun containsAny(nodes: List<UiNode>, fragments: List<String>): Boolean {
+    val wanted = fragments.map(::fold).filter { it.isNotEmpty() }
+    if (wanted.isEmpty()) return false
+    return nodes.any { n -> n.usable && n.rawLabels.any { raw -> val f = fold(raw); wanted.any { f.contains(it) } } }
+}
+
+/** Görünür düğümleri view-id'sine göre bulur (id'nin son parçası, büyük/küçük harf duyarsız). */
+fun findByViewId(nodes: List<UiNode>, ids: List<String>): Match {
+    val wanted = ids.map { it.trim().lowercase() }.filter { it.isNotEmpty() }.toSet()
+    if (wanted.isEmpty()) return Match.None
+    val hits = nodes.filter { n -> n.usable && n.viewId.substringAfterLast('/').lowercase() in wanted }.sortedBy { it.area }
+    val reps = mutableListOf<UiNode>()
+    for (h in hits) if (reps.none { it.contains(h) || h.contains(it) }) reps.add(h)
+    return when (reps.size) { 0 -> Match.None; 1 -> Match.One(reps[0]); else -> Match.Many(reps) }
+}
+
+const val PROFILE_USERNAME_ID = "profile_identity_section_username"
+
+/**
+ * Profilin kimlik satırı varsa (Snapchat: profile_identity_section_username) YALNIZCA ona bakılır;
+ * böylece "arkadaş önerileri" listesindeki başka bir hesabın adı yanlış doğrulama üretmez.
+ * Bu satır ağaçta yoksa genel jeton aramasına düşülür.
+ */
+fun profileUsernameVisible(nodes: List<UiNode>, username: String): Boolean {
+    val idNodes = nodes.filter { it.usable && it.viewId.substringAfterLast('/') == PROFILE_USERNAME_ID }
+    return if (idNodes.isNotEmpty()) usernameVisible(idNodes, username) else usernameVisible(nodes, username)
+}
+
+enum class ProfileVerdict { USERNAME_MISSING, MUTUAL_FRIEND, NOT_FRIEND_ADD, PENDING_OK, UNKNOWN_STATE }
 
 /**
  * Güvenlik kapısı. Yalnızca kullanıcı adı doğrulanmış VE profilde açıkça "bekleyen/gönderilmiş
@@ -103,7 +132,9 @@ enum class ProfileVerdict { USERNAME_MISSING, NOT_FRIEND_ADD, PENDING_OK, UNKNOW
  * İkisi de yoksa karşılıklı arkadaş olabilir; dokunulmaz.
  */
 fun classifyProfile(nodes: List<UiNode>, username: String, labels: Map<String, List<String>>): ProfileVerdict {
-    if (!usernameVisible(nodes, username)) return ProfileVerdict.USERNAME_MISSING
+    if (!profileUsernameVisible(nodes, username)) return ProfileVerdict.USERNAME_MISSING
+    // Karşılıklı arkadaşlık yazısı varsa kesinlikle dokunma (örn. "... tarihinden beri arkadaş").
+    if (containsAny(nodes, labels["friendsince"].orEmpty())) return ProfileVerdict.MUTUAL_FRIEND
     if (isPresent(nodes, labels["add"].orEmpty())) return ProfileVerdict.NOT_FRIEND_ADD
     if (isPresent(nodes, labels["pending"].orEmpty())) return ProfileVerdict.PENDING_OK
     return ProfileVerdict.UNKNOWN_STATE
@@ -137,12 +168,14 @@ fun overflowCandidates(nodes: List<UiNode>, screenLeft: Int, screenTop: Int, scr
 /** Ayarlanabilir etiket sözlüğü. Satır biçimi: anahtar=etiket1,etiket2 */
 object Labels {
     val defaults: LinkedHashMap<String, List<String>> = linkedMapOf(
+        "overflowid" to listOf("unified_profile_icon_button_action_menu"),
         "overflow" to listOf("More options", "More", "Diğer seçenekler", "Daha fazla", "Menü", "Menu"),
         "manage" to listOf("Manage Friendship", "Arkadaşlığı Yönet"),
         "removefriend" to listOf("Remove Friend", "Arkadaşı Sil", "Arkadaşı Kaldır"),
         "confirm" to listOf("Remove", "Kaldır"),
         "add" to listOf("Add", "Add Friend", "Ekle", "Arkadaş Ekle"),
-        "pending" to listOf("Pending", "Beklemede", "Request Sent", "İstek Gönderildi")
+        "pending" to listOf("Pending", "Beklemede", "Request Sent", "İstek Gönderildi"),
+        "friendsince" to listOf("tarihinden beri arkadaş", "beri arkadaş", "friends since")
     )
 
     fun defaultText(): String = defaults.entries.joinToString("\n") { (k, v) -> k + "=" + v.joinToString(",") }
