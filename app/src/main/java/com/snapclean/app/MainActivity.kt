@@ -286,6 +286,7 @@ class MainActivity : ComponentActivity() {
                                     }, style = MaterialTheme.typography.labelSmall
                                 )
                                 }
+                                }
                                 Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                     TextButton(onClick = { openProfile(entry.username) }) { Text(t("Open profile", "Profili aç")) }
                                     TextButton(onClick = { copyUsername(entry.username) }) { Text(t("Copy", "Kopyala")) }
