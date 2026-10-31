@@ -156,7 +156,8 @@ class MainActivity : ComponentActivity() {
                     surface = surface, onSurface = Color(0xFFF1F5F9), onBackground = Color(0xFFF1F5F9)
                 )
             ) {
-                Surface(color = background, modifier = Modifier.fillMaxSize()) {\n                Column(Modifier.fillMaxSize().padding(16.dp)) {
+                Surface(color = background, modifier = Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxSize().padding(16.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
                             Text("SnapClean", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
@@ -238,7 +239,8 @@ class MainActivity : ComponentActivity() {
                     )
                     TextButton(onClick = { confirmClear = true }) { Text(t("Clear imported data", "Aktarılan verileri temizle")) }
                 }
-                }\n                if (confirmClear) AlertDialog(
+                }
+                if (confirmClear) AlertDialog(
                     onDismissRequest = { confirmClear = false },
                     title = { Text(t("Delete local data?", "Yerel veriler silinsin mi?")) },
                     text = { Text(t("All imported records and review statuses will be deleted from this device.", "Aktarılan kayıtlar ve inceleme durumları bu cihazdan silinecek.")) },
