@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -227,6 +228,32 @@ class MainActivity : ComponentActivity() {
                     Button(onClick = { picker.launch("*/*") }, enabled = !importing, modifier = Modifier.fillMaxWidth()) {
                         Text(if (importing) t("Importing…", "İçe aktarılıyor…") else t("Import Snapchat HTML / ZIP", "Snapchat HTML / ZIP içe aktar"))
                     }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(200)
+                            if (batch.isEmpty()) {
+                                message = t("No unreviewed records", "İncelenmemiş kayıt yok")
+                            } else {
+                                getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
+                                    .putString("names", batch.joinToString("\\n") { it.username })
+                                    .putInt("index", 0)
+                                    .putBoolean("running", true)
+                                    .apply()
+                                message = t(
+                                    "Experimental batch prepared (max 200). Enable SnapClean accessibility access. No requests will be cancelled automatically until Snapchat controls are verified.",
+                                    "Deneysel parti hazır (en fazla 200). SnapClean erişilebilirlik iznini aç. Snapchat kontrolleri doğrulanana kadar istekler otomatik iptal edilmeyecek."
+                                )
+                                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text(t("Prepare 200-account automation", "200 hesaplık otomasyonu hazırla")) }
+                    TextButton(onClick = {
+                        getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
+                            .putBoolean("running", false).apply()
+                        message = t("Automation stopped", "Otomasyon durduruldu")
+                    }) { Text(t("Stop automation", "Otomasyonu durdur")) }
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = query, onValueChange = { query = it },
