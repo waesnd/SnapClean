@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
                     Spacer(Modifier.height(8.dp))
                     Button(
                         onClick = {
-                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(1)
+                            val batch = entries.filter { statuses[it.username].isNullOrEmpty() }.take(5)
                             if (batch.isEmpty()) {
                                 message = t("No unreviewed records", "İncelenmemiş kayıt yok")
                             } else {
@@ -244,8 +244,8 @@ class MainActivity : ComponentActivity() {
                                     .putBoolean("running", true)
                                     .apply()
                                 message = t(
-                                    "Experimental one-account test prepared. Enable SnapClean accessibility access. The service may remove that account if Snapchat controls match.",
-                                    "Tek hesaplık deneysel test hazır. SnapClean erişilebilirlik iznini aç. Ekran kontrolleri eşleşirse o hesap kaldırılabilir."
+                                    "Experimental five-account test prepared. Enable SnapClean accessibility access. The service may remove that account if Snapchat controls match.",
+                                    "Beş hesaplık deneysel test hazır. SnapClean erişilebilirlik iznini aç. Ekran kontrolleri eşleşirse o hesap kaldırılabilir."
                                 )
                                 val manager = getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
                                 val enabled = manager.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
@@ -255,12 +255,12 @@ class MainActivity : ComponentActivity() {
                                     message = t("Enable SnapClean accessibility service once, then return and tap the test button.", "SnapClean erişilebilirlik servisini bir kez aç, geri dönüp test düğmesine tekrar bas.")
                                     startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                                 } else {
-                                    message = t("Accessibility active. Starting one-account test.", "Erişilebilirlik aktif. Tek hesaplık test başlatılıyor.")
+                                    message = t("Accessibility active. Starting five-account test.", "Erişilebilirlik aktif. Beş hesaplık test başlatılıyor.")
                                 }
                             }
                         },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(t("Prepare 1-account test", "1 hesaplık otomasyon testi")) }
+                    ) { Text(t("Prepare 5-account test", "5 hesaplık otomasyon testi")) }
                     TextButton(onClick = {
                         getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                             .putBoolean("running", false).apply()
