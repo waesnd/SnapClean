@@ -30,7 +30,8 @@ class CleanupService : AccessibilityService() {
     private var verifiedProfile = false
     private var movingToNext = false
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "running" && prefs.getBoolean("running", false) && !running) reload()
+        if (key == "session_token" && prefs.getBoolean("running", false)) reload()
+        else if (key == "running" && prefs.getBoolean("running", false) && !running) reload()
         else if (key == "running" && !prefs.getBoolean("running", false)) running = false
     }
 
@@ -47,10 +48,14 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun reload() {
-        names = prefs.getString("names", "").orEmpty().split("\n").filter { it.isNotBlank() }.take(200)
+        session++
+        names = prefs.getString("names", "").orEmpty().split("\n").filter { it.isNotBlank() }.distinct().take(200)
         index = prefs.getInt("index", 0).coerceIn(0, names.size)
         running = prefs.getBoolean("running", false)
-        if (running && index < names.size) openNext()
+        if (running && index < names.size) {
+            prefs.edit().putString("last_result", "Başlatılıyor: ${names[index]} (${index + 1}/${names.size})").apply()
+            openNext()
+        }
     }
 
     private fun persist() {
@@ -68,6 +73,7 @@ class CleanupService : AccessibilityService() {
         if (!running || !prefs.getBoolean("running", false)) { stop("Durduruldu"); return }
         if (index >= names.size) { stop("Parti tamamlandı"); return }
         step = Step.PROFILE
+        prefs.edit().putString("last_result", "Profil açılıyor: ${names[index]} (${index + 1}/${names.size})").apply()
         movingToNext = false
         verifiedProfile = false
         startedAt = android.os.SystemClock.uptimeMillis()
