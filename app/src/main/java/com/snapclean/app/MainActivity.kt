@@ -220,31 +220,37 @@ private fun loadStatuses(raw: String): Map<String, String> = try {
 private fun parseSnapchatExport(html: String): List<RequestEntry> {
     val doc = Jsoup.parse(html)
     val headings = doc.select("h1,h2,h3,h4,h5")
-    val matching = headings.firstOrNull { heading ->
-        val text = heading.text().lowercase(Locale.ROOT)
-        listOf("sent friend requests", "friend requests sent", "gönderilen arkadaşlık istekleri", "envoyées", "gesendete freundschaftsanfragen")
-            .any { text.contains(it) }
+    val titleKeywords = listOf(
+        "gönderilen arkadaşlık istekleri", "sent friend requests",
+        "friend requests sent", "outgoing friend requests",
+        "demandes d’amis envoyées", "demandes d'amis envoyées",
+        "gesendete freundschaftsanfragen", "solicitudes de amistad enviadas"
+    )
+    val heading = headings.firstOrNull { element ->
+        val title = element.text().trim().lowercase(Locale.ROOT)
+        titleKeywords.any { title.contains(it) }
+    } ?: return emptyList()
+
+    // Snapchat exports can place explanatory text between a heading and its table.
+    // Find the first table before the next section heading, rather than assuming
+    // that the table is the heading's immediate sibling.
+    var sibling = heading.nextElementSibling()
+    var table: org.jsoup.nodes.Element? = null
+    while (sibling != null) {
+        if (sibling.tagName().matches(Regex("h[1-5]"))) break
+        table = if (sibling.tagName() == "table") sibling else sibling.selectFirst("table")
+        if (table != null) break
+        sibling = sibling.nextElementSibling()
     }
-    val tables = if (matching != null) {
-        val candidates = mutableListOf<org.jsoup.nodes.Element>()
-        var node = matching.nextElementSibling()
-        while (node != null && node.tagName() !in listOf("h1", "h2", "h3", "h4", "h5")) {
-            candidates.addAll(if (node.tagName() == "table") listOf(node) else node.select("table"))
-            node = node.nextElementSibling()
+    val rows = table?.select("tr") ?: return emptyList()
+    return rows.mapNotNull { row ->
+        val cells = row.select("td")
+        if (cells.size < 2) null else {
+            val username = cells[0].text().trim().removePrefix("@")
+            // Avoid strict Snapchat username regex here: historical export data
+            // may include usernames that no longer satisfy current rules.
+            if (username.isBlank() || username.length > 80) null
+            else RequestEntry(username, cells[1].text(), cells.getOrNull(2)?.text() ?: "")
         }
-        candidates
-    } else emptyList()
-    val result = mutableListOf<RequestEntry>()
-    tables.forEach { table ->
-        table.select("tr").forEach { row ->
-            val cols = row.select("td")
-            if (cols.isNotEmpty()) {
-                val username = cols[0].text().trim().removePrefix("@")
-                if (usernamePattern.matches(username)) {
-                    result.add(RequestEntry(username, cols.getOrNull(1)?.text() ?: "", cols.getOrNull(2)?.text() ?: ""))
-                }
-            }
-        }
-    }
-    return result.distinctBy { it.username.lowercase(Locale.ROOT) }
+    }.distinctBy { it.username.lowercase(Locale.ROOT) }
 }
