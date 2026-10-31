@@ -275,12 +275,12 @@ class MainActivity : ComponentActivity() {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
-                    Text("${selected.size} " + t("accounts selected", "hesap seçildi"), style = MaterialTheme.typography.labelSmall)
+                    Text(if (selected.isEmpty()) t("Next ${sortedVisible.count { statuses[it.username].isNullOrEmpty() }.coerceAtMost(batchSize.coerceAtLeast(0))} unreviewed accounts will be used", "Sıradaki ${sortedVisible.count { statuses[it.username].isNullOrEmpty() }.coerceAtMost(batchSize.coerceAtLeast(0))} incelenmemiş hesap işlenecek") else "${selected.size} " + t("accounts selected", "hesap seçildi"), style = MaterialTheme.typography.labelSmall)
                     Button(
                         onClick = {
-                            val batch = sortedVisible.filter { it.username in selected && statuses[it.username].isNullOrEmpty() }.take(batchSize)
+                            val batch = sortedVisible.filter { statuses[it.username].isNullOrEmpty() && (selected.isEmpty() || it.username in selected) }.take(batchSize)
                             if (batch.isEmpty()) {
-                                message = t("Select unreviewed accounts using the checkboxes first.", "Önce kutucuklardan incelenmemiş hesapları seç.")
+                                message = t("No unreviewed accounts available in the current filter.", "Mevcut filtrede işlenecek incelenmemiş hesap yok.")
                             } else {
                                 getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                                     .putString("names", batch.joinToString("\n") { it.username })
@@ -305,9 +305,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         },
-                        enabled = selected.isNotEmpty() && batchSize in 1..200,
+                        enabled = batchSize in 1..200 && sortedVisible.any { statuses[it.username].isNullOrEmpty() && (selected.isEmpty() || it.username in selected) },
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text(if (language == "tr") "Seçilen hesapları başlat" else "Start selected batch") }
+                    ) { Text(if (language == "tr") "Belirlenen sayıda hesabı başlat" else "Start batch") }
                     TextButton(onClick = {
                         getSharedPreferences("cleanup_batch", Context.MODE_PRIVATE).edit()
                             .putBoolean("running", false).apply()
