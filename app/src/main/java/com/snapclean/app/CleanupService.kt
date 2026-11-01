@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.os.SystemClock
+import android.view.ViewConfiguration
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import java.text.SimpleDateFormat
@@ -55,7 +56,7 @@ class CleanupService : AccessibilityService() {
         MANAGE("Arkadaşlığı Yönet", 10_000L, 3),
         REMOVE_FRIEND("Arkadaşı Sil", 10_000L, 3),
         CONFIRM("onay", 10_000L, 2),
-        VERIFY("doğrulama", 26_000L, 0)
+        VERIFY("doğrulama", 45_000L, 0)
     }
 
     private class Screen(
@@ -85,6 +86,16 @@ class CleanupService : AccessibilityService() {
     private var launchRetried = false
     private var searchStage = 0
     private var chatTaps = 0
+    private var stabKey = ""
+    private var stabRect = ""
+    private var stabAt = 0L
+    private var ambigSince = 0L
+    private var sheetClosedAt = 0L
+    private var resultTapMode = 0
+    private var lastTapHow = ""
+    private var tapSig = 0
+    private var tapAt = 0L
+    private var gestureCancels = 0
     private var chatDumped = false
     private var resultDumped = false
     private var searchActionAt = 0L
@@ -191,7 +202,7 @@ class CleanupService : AccessibilityService() {
         manualProfileName = username
         manualProfileStarted = SystemClock.uptimeMillis()
         searchStage = 0
-        chatTaps = 0; chatDumped = false; resultDumped = false
+        chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0; gestureCancels = 0
         searchActionAt = 0L
         stepStartedAt = manualProfileStarted
         if (!launchProfile(username)) {
@@ -306,7 +317,7 @@ class CleanupService : AccessibilityService() {
         verifyReopened = false
         launchRetried = false
         searchStage = 0
-        chatTaps = 0; chatDumped = false; resultDumped = false
+        chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0; gestureCancels = 0
         searchActionAt = 0L
         unknownSince = 0L
         profileDumped = false
@@ -383,6 +394,10 @@ class CleanupService : AccessibilityService() {
         }
         publishRead(screen, now)
         val nodes = screen.nodes
+        if (tapSig != 0 && now - tapAt > 1200L) {
+            appendLog("dokunuş etkisi [$lastTapHow]: " + if (screenSignature(nodes) != tapSig) "ekran değişti" else "ekran DEĞİŞMEDİ")
+            tapSig = 0
+        }
 
         when (step) {
             Step.PROFILE -> {
@@ -394,6 +409,7 @@ class CleanupService : AccessibilityService() {
                         failStep(username, "profil açılamadı (arama aşaması=$searchStage); görülen: " + sample(nodes), screen)
                         return
                     }
+                    if (closeLeftoverSheet(now, screen)) return
                     val busy = searchForProfile(username, now, screen)
                     if (!busy) stepWait(username, now, screen, "arama düğmesi bulunamadı; görülen: " + sample(nodes))
                     else status("Profil aranıyor ($searchStage/3): $username")
@@ -430,11 +446,12 @@ class CleanupService : AccessibilityService() {
                     return
                 }
                 val target = targets[(attempts / 2).coerceAtMost(targets.size - 1)]
+                if (!isStable("menu", target, now)) { status("Menü düğmesi yerleşiyor: $username"); return }
                 val viaGesture = attempts % 2 == 1
                 val ok = tapNode(screen, target, viaGesture)
                 attempts++
                 lastActionAt = now
-                status("Menü denemesi $attempts/${step.maxAttempts}: ${describe(target)} ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}")
+                status("Menü denemesi $attempts/${step.maxAttempts}: ${describe(target)} $lastTapHow ${if (ok) "gönderildi" else "reddedildi"}")
             }
 
             Step.MANAGE -> {
@@ -454,15 +471,25 @@ class CleanupService : AccessibilityService() {
             Step.VERIFY -> {
                 if (verifySuccess(nodes, username)) { complete(username); return }
                 val waited = now - stepStartedAt
-                if (!verifyReopened && waited > 7000L) {
-                    verifyReopened = true
-                    status("Doğrulama için profil yeniden açılıyor: $username")
-                    launchProfile(username)
-                    return
-                }
                 if (waited > step.timeoutMs) {
                     failStep(username, "'Kaldır'a basıldı ama profilde 'Ekle' doğrulanamadı. Silinmiş OLABİLİR; elle kontrol et (kayıt 'done' yapılmadı)", screen)
-                } else status("Silme doğrulanıyor: $username (${waited / 1000} sn)")
+                    return
+                }
+                // "Kaldır"dan sonra Snapchat çoğu zaman profile DÖNMEZ (Sohbet listesine gider). Profili aramayla yeniden aç.
+                if (!onTargetProfile(nodes, username)) {
+                    if (closeLeftoverSheet(now, screen)) return
+                    if (waited > 3000L) {
+                        if (!verifyReopened) {
+                            verifyReopened = true
+                            searchStage = 0; chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0
+                            searchActionAt = 0L
+                            status("Silme sonrası doğrulama için profil aramayla yeniden açılıyor: $username")
+                        }
+                        searchForProfile(username, now, screen)
+                        return
+                    }
+                }
+                status("Silme doğrulanıyor: $username (${waited / 1000} sn)")
             }
         }
     }
@@ -515,10 +542,17 @@ class CleanupService : AccessibilityService() {
                     screen.refs.getOrNull(n.index)?.isEditable != true
             }
             if (matches.size == 1 && !resultDumped) { resultDumped = true; dumpScreen("ARAMA-SONUCU", screen) }
-            if (matches.size == 1 && tapNode(screen, matches[0], false)) {
-                searchStage = 3
-                searchActionAt = now
-                status("Arama sonucu açılıyor: $username")
+            if (matches.size == 1) {
+                // Satıra/metne dokunmak SOHBET açar; profil için önce avatara (hareketle) dokun.
+                val avatar = if (resultTapMode == 0)
+                    resultAvatarCandidates(nodes, matches[0], resources.displayMetrics.widthPixels).firstOrNull() else null
+                val target = avatar ?: matches[0]
+                val ok = tapNode(screen, target, avatar != null)
+                if (ok) {
+                    searchStage = 3
+                    searchActionAt = now
+                    status("Arama sonucu açılıyor (" + (if (avatar != null) "avatar" else "satır") + ") $lastTapHow: $username")
+                }
             } else if (matches.size > 1) {
                 searchFail(username, "Arama sonuçlarında birden fazla aynı kullanıcı adı var; dokunulmadı", screen)
             }
@@ -545,8 +579,16 @@ class CleanupService : AccessibilityService() {
             val viaGesture = chatTaps % 2 == 1
             val ok = tapNode(screen, target, viaGesture)
             chatTaps++
-            status("Sohbet açıldı; profil için başlığa dokunuluyor ($chatTaps/4): ${describe(target)} ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}")
+            status("Sohbet açıldı; profil için başlığa dokunuluyor ($chatTaps/4): ${describe(target)} $lastTapHow ${if (ok) "gönderildi" else "reddedildi"}")
             return true
+        }
+        // Avatar profil açmadı ve hâlâ arama ekranındayız: bir kez satıra dokun (sohbet açar; üstteki blok profile geçer).
+        val stillSearch = nodes.any { n -> n.usable && screen.refs.getOrNull(n.index)?.isEditable == true }
+        if (stillSearch && resultTapMode == 0 && now - searchActionAt > 2500L) {
+            resultTapMode = 1
+            searchStage = 2
+            searchActionAt = now
+            status("Avatar profil açmadı; satıra dokunulacak (sohbet → başlık yolu): $username")
         }
         return true
     }
@@ -619,6 +661,11 @@ class CleanupService : AccessibilityService() {
             }
             is Match.Many -> failStep(username, "onay düğmesi için ${m.nodes.size} belirsiz eşleşme; dokunulmadı", screen)
             is Match.One -> {
+                if (!dialogNamesUser(nodes, username)) {
+                    failStep(username, "onay penceresi hedef kullanıcı adını göstermiyor; 'Kaldır'a BASILMADI", screen)
+                    return
+                }
+                if (!isStable("confirm", m.node, now)) { status("Onay penceresi yerleşiyor: $username"); return }
                 if (prefs.getBoolean("dry_run", true)) { dryRunDone(username, screen); return }
                 if (now - profileVerifiedAt > VERIFIED_TTL_MS) {
                     failStep(username, "profil doğrulaması 2 dakikadan eski; güvenlik için iptal", screen)
@@ -631,7 +678,7 @@ class CleanupService : AccessibilityService() {
                 val ok = tapNode(screen, m.node, viaGesture)
                 attempts++
                 lastActionAt = now
-                status("ONAY basıldı ($attempts/${step.maxAttempts}) ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}: $username")
+                status("ONAY basıldı ($attempts/${step.maxAttempts}) $lastTapHow ${if (ok) "gönderildi" else "reddedildi"}: $username")
             }
         }
     }
@@ -643,10 +690,36 @@ class CleanupService : AccessibilityService() {
         attempts = 0
         stepStartedAt = now
         lastActionAt = 0L
+        ambigSince = 0L
         status("→ ${next.label}")
     }
 
     private fun lbl(key: String): List<String> = labels[key].orEmpty()
+
+    /**
+     * Hedefin konumu en az 350 ms değişmediyse true. Alt sayfa kayarken bounds okuyup dokunmak, komşu satıra
+     * ("Engelle", "Şikayet Et" "Arkadaşı Sil"in hemen üstünde/altında) basmaya yol açabilir.
+     */
+    private fun isStable(key: String, n: UiNode, now: Long): Boolean {
+        val rect = "${n.left},${n.top},${n.right},${n.bottom}"
+        if (key != stabKey || rect != stabRect) {
+            stabKey = key; stabRect = rect; stabAt = now
+            return false
+        }
+        return now - stabAt >= 350L
+    }
+
+    /** Önceki hesaptan açık kalan "Tamamlandı" alt sayfasını kapatır. Sayfa varsa true (çağıran beklesin). */
+    private fun closeLeftoverSheet(now: Long, screen: Screen): Boolean {
+        val m = findExact(screen.nodes, lbl("sheetdone"))
+        if (m !is Match.One) return false
+        if (now - sheetClosedAt >= 1500L && isStable("sheetdone", m.node, now)) {
+            sheetClosedAt = now
+            val ok = tapNode(screen, m.node, false)
+            status("Açık kalan alt sayfa kapatılıyor: $lastTapHow ${if (ok) "gönderildi" else "reddedildi"}")
+        }
+        return true
+    }
 
     /** Ekran kapalı/kilitliyken otomasyon dokunuş göndermez (kullanıcının telefona ihtiyacı olabilir). */
     private fun screenAvailable(): Boolean {
@@ -700,15 +773,22 @@ class CleanupService : AccessibilityService() {
         if (waitingForRetry(now)) return
         when (val m = findExact(screen.nodes, lbl(key))) {
             is Match.None -> status("$what bekleniyor")
-            is Match.Many -> failStep(username, "$what için ${m.nodes.size} belirsiz eşleşme; dokunulmadı", screen)
+            is Match.Many -> {
+                // Alt sayfa geçişinde iki sayfanın aynı etiketi kısa süre birlikte görünebilir; kalıcıysa dur.
+                if (ambigSince == 0L) ambigSince = now
+                if (now - ambigSince >= 2500L) failStep(username, "$what için ${m.nodes.size} belirsiz eşleşme; dokunulmadı", screen)
+                else status("$what için birden fazla eşleşme, ekranın oturması bekleniyor")
+            }
             is Match.One -> {
+                ambigSince = 0L
+                if (!isStable(step.name + ":" + key, m.node, now)) { status("$what yerleşiyor"); return }
                 if (attempts >= step.maxAttempts) { failStep(username, "$what $attempts denemede ekranı değiştirmedi", screen); return }
                 if (attempts == 0) dumpScreen("${step.name}-ONCESI", screen)
                 val viaGesture = attempts % 2 == 1
                 val ok = tapNode(screen, m.node, viaGesture)
                 attempts++
                 lastActionAt = now
-                status("$what denemesi $attempts/${step.maxAttempts}: ${if (viaGesture) "hareket" else "tıklama"} ${if (ok) "gönderildi" else "reddedildi"}")
+                status("$what denemesi $attempts/${step.maxAttempts}: $lastTapHow ${if (ok) "gönderildi" else "reddedildi"}")
             }
         }
     }
@@ -716,7 +796,8 @@ class CleanupService : AccessibilityService() {
     private fun dryRunDone(username: String, screen: Screen) {
         dumpScreen("KURU-ONAY-EKRANI", screen)
         dryCount++
-        performGlobalAction(GLOBAL_ACTION_BACK)
+        val cancel = findExact(screen.nodes, lbl("cancel"))
+        if (cancel is Match.One) tapNode(screen, cancel.node, false) else performGlobalAction(GLOBAL_ACTION_BACK)
         status("KURU ÇALIŞTIRMA tamam: $username için akış onay ekranına kadar çalıştı, 'Kaldır'a BASILMADI")
         advanceAfter(1800L, 3000L)
     }
@@ -805,15 +886,32 @@ class CleanupService : AccessibilityService() {
 
     /** gesture=false: en yakın tıklanabilir atayı ACTION_CLICK ile tıklar; yoksa hareketle dokunur. */
     private fun tapNode(screen: Screen, n: UiNode, gesture: Boolean): Boolean {
+        tapSig = screenSignature(screen.nodes)
+        tapAt = SystemClock.uptimeMillis()
         if (!gesture) {
+            // ACTION_CLICK yalnızca düğümün KENDİSİ ya da benzer boyutta bir atası tıklanabilirse kullanılır.
+            // Büyük bir kapsayıcıyı (satır/liste/ekran) tıklamak "true" döner ama yanlış yere gider.
+            val dm = resources.displayMetrics
+            val screenArea = dm.widthPixels.toLong() * dm.heightPixels
             var cur: AccessibilityNodeInfo? = screen.refs.getOrNull(n.index)
             var hops = 0
-            while (cur != null && hops < 7) {
-                if (cur.isClickable && cur.isEnabled) return cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            while (cur != null && hops < 4) {
+                if (cur.isClickable && cur.isEnabled) {
+                    val r = Rect()
+                    cur.getBoundsInScreen(r)
+                    val plausible = hops == 0 ||
+                        ancestorIsPlausibleTarget(n.area, r.width().toLong() * r.height().toLong(), screenArea)
+                    if (plausible) {
+                        lastTapHow = "ACTION_CLICK(" + (if (hops == 0) "kendisi" else "üst$hops") + ")"
+                        return cur.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                    }
+                    break // uygunsuz büyük ata: onu tıklama, hedefin kendi koordinatına dokun
+                }
                 cur = cur.parent
                 hops++
             }
         }
+        lastTapHow = "HAREKET(${n.centerX},${n.centerY})"
         return gestureTapAt(n.centerX, n.centerY)
     }
 
@@ -823,9 +921,10 @@ class CleanupService : AccessibilityService() {
         val dm = resources.displayMetrics
         val px = x.coerceIn(1, dm.widthPixels - 1).toFloat()
         val py = y.coerceIn(1, dm.heightPixels - 1).toFloat()
-        val path = Path().apply { moveTo(px, py) }
+        // Sıfır uzunluklu yol bazı cihazlarda dokunuş sayılmaz: 1 px'lik çizgi ve sistemin tap süresi kullanılır.
+        val path = Path().apply { moveTo(px, py); lineTo(px + 1f, py + 1f) }
         val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0L, 70L)).build()
+            .addStroke(GestureDescription.StrokeDescription(path, 0L, ViewConfiguration.getTapTimeout().toLong())).build()
         gestureBusyUntil = now + 1500L
         val accepted = dispatchGesture(gesture, object : AccessibilityService.GestureResultCallback() {
             override fun onCompleted(gestureDescription: GestureDescription?) {
@@ -834,7 +933,11 @@ class CleanupService : AccessibilityService() {
             }
             override fun onCancelled(gestureDescription: GestureDescription?) {
                 gestureBusyUntil = 0L
-                appendLog("dokunma hareketi Android tarafından İPTAL edildi ($x,$y)")
+                gestureCancels++
+                appendLog("dokunma hareketi Android tarafından İPTAL edildi ($x,$y) [$gestureCancels]")
+                if (running && gestureCancels >= 3) {
+                    failCurrent("dokunma hareketi 3 kez iptal edildi (ekrana dokunulmuş veya araya bir pencere girmiş olabilir)")
+                }
             }
         }, handler)
         if (!accepted) {

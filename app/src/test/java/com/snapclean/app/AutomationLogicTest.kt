@@ -195,4 +195,95 @@ class AutomationLogicTest {
         val withName = chatScreen() + node(text = "halenurbasar61", index = 6)
         assertFalse(onTargetProfile(withName, "halenurbasar61"))
     }
+
+    @Test fun hugeContainerIsNotAPlausibleClickTarget() {
+        val screen = 1220L * 2712L
+        // Üç nokta simgesi 114x114; ekranı kaplayan RecyclerView (1220x2570) asla hedef olmamalı
+        assertFalse(ancestorIsPlausibleTarget(114L * 114L, 1220L * 2570L, screen))
+        // Simgeyi saran 150x150'lik düğme makul
+        assertTrue(ancestorIsPlausibleTarget(114L * 114L, 150L * 150L, screen))
+        // Geçersiz boyutlar güvenli tarafta
+        assertFalse(ancestorIsPlausibleTarget(0L, 100L, screen))
+        assertFalse(ancestorIsPlausibleTarget(100L, 100L, 0L))
+    }
+
+    // Videodaki arama sonucu satırı (1220 genişlik): avatar solda, adın yanında küçük durum simgesi, altında kullanıcı adı.
+    private fun resultRow() = listOf(
+        node(l = 70, t = 100, r = 230, b = 262, index = 0),                                   // avatar 160x162
+        node(text = "Laz kızı", l = 270, t = 110, r = 520, b = 165, index = 1),               // görünen ad
+        node(l = 270, t = 205, r = 312, b = 247, index = 2),                                  // durum kutucuğu 42x42
+        node(text = "halenurbasar61", l = 330, t = 200, r = 700, b = 255, index = 3)          // kullanıcı adı (çapa)
+    )
+
+    @Test fun avatarIsFoundLeftOfUsernameAndStatusIconIsSkipped() {
+        val nodes = resultRow()
+        val c = resultAvatarCandidates(nodes, nodes[3], 1220)
+        assertEquals(0, c.first().index)
+        assertTrue(c.none { it.index == 2 })   // küçük durum simgesi elenir
+        assertTrue(c.none { it.index == 1 })   // geniş metin düğümü (kare değil) elenir
+    }
+
+    @Test fun avatarCandidatesNeverPickNodesToTheRightOrFarAbove() {
+        val anchor = node(text = "u", l = 330, t = 200, r = 700, b = 255, index = 9)
+        val right = node(l = 800, t = 100, r = 960, b = 262, index = 1)
+        val farAbove = node(l = 70, t = -400, r = 230, b = -238, index = 2)
+        assertTrue(resultAvatarCandidates(listOf(anchor, right, farAbove), anchor, 1220).isEmpty())
+        assertTrue(resultAvatarCandidates(emptyList(), anchor, 0).isEmpty())
+    }
+
+    @Test fun screenSignatureDetectsChangeButIgnoresOrderAndHiddenNodes() {
+        val a = listOf(node(text = "A", index = 0), node(text = "B", index = 1))
+        val reordered = listOf(node(text = "B", index = 0), node(text = "A", index = 1))
+        assertEquals(screenSignature(a), screenSignature(reordered))
+        assertFalse(screenSignature(a) == screenSignature(a + node(text = "C", index = 2)))
+        assertEquals(screenSignature(a), screenSignature(a + node(text = "gizli", visible = false, index = 2)))
+    }
+
+    // Ekran görüntüsünden (900 genişlik ölçeği): "Arkadaşlığı Yönet" ikinci alt sayfası.
+    private fun manageSheet() = listOf(
+        node(text = "Arkadaşlığı Yönet", l = 58, t = 1170, r = 300, b = 1205, index = 0),   // sayfa başlığı
+        node(text = "Daha Fazla Bilgi", l = 580, t = 1170, r = 790, b = 1205, index = 1),
+        node(text = "Engelle", l = 58, t = 1275, r = 180, b = 1315, index = 2),
+        node(text = "Şikayet Et", l = 58, t = 1405, r = 216, b = 1445, index = 3),
+        node(text = "Arkadaşı Sil", l = 58, t = 1535, r = 244, b = 1575, index = 4),
+        node(text = "Adı Düzenle", l = 58, t = 1665, r = 256, b = 1705, index = 5),
+        node(text = "Tamamlandı", l = 350, t = 1805, r = 550, b = 1845, index = 6)
+    )
+
+    // Onay penceresi (ekran görüntüsü 4).
+    private fun confirmDialog() = listOf(
+        node(text = "nilgunoruc25 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?", l = 190, t = 770, r = 710, b = 930, index = 0),
+        node(text = "Kaldır", l = 190, t = 977, r = 708, b = 1088, index = 1, clickable = true),
+        node(text = "İptal et", l = 380, t = 1140, r = 520, b = 1190, index = 2)
+    )
+
+    @Test fun realManageSheetLabelsResolveToSingleTargets() {
+        val rf = Labels.defaults["removefriend"].orEmpty()
+        val m = findExact(manageSheet(), rf)
+        assertTrue(m is Match.One)
+        assertEquals(4, (m as Match.One).node.index)                 // "Engelle"/"Şikayet Et" ile karışmaz
+        assertTrue(findExact(manageSheet(), Labels.defaults["sheetdone"].orEmpty()) is Match.One)
+    }
+
+    @Test fun manageLabelAppearsTwiceDuringSheetTransitionAndIsAmbiguous() {
+        // İlk sayfadaki satır + ikinci sayfadaki başlık aynı anda ağaçtaysa Many döner (servis kısa süre bekler).
+        val firstSheetRow = node(text = "Arkadaşlığı Yönet", l = 58, t = 905, r = 340, b = 945, index = 9)
+        val both = manageSheet() + firstSheetRow
+        assertTrue(findExact(both, Labels.defaults["manage"].orEmpty()) is Match.Many)
+    }
+
+    @Test fun confirmDialogButtonsAreUniqueAndDialogNamesTheUser() {
+        val d = confirmDialog()
+        assertEquals(1, (findExact(d, Labels.defaults["confirm"].orEmpty()) as Match.One).node.index)
+        assertEquals(2, (findExact(d, Labels.defaults["cancel"].orEmpty()) as Match.One).node.index)
+        assertTrue(dialogNamesUser(d, "nilgunoruc25"))
+        assertFalse(dialogNamesUser(d, "nilgunoruc2"))      // önek eşleşmez
+        assertFalse(dialogNamesUser(d, "baska_kullanici"))
+    }
+
+    @Test fun profileIdentityRowAloneDoesNotCountAsDialogConfirmation() {
+        val identity = node(text = "nilgunoruc25", id = "x:id/profile_identity_section_username", index = 0)
+        val noName = listOf(node(text = "Kaldır", index = 1), identity)
+        assertFalse(dialogNamesUser(noName, "nilgunoruc25"))
+    }
 }

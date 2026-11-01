@@ -180,6 +180,52 @@ fun overflowCandidates(nodes: List<UiNode>, screenLeft: Int, screenTop: Int, scr
     return reps.take(4)
 }
 
+/**
+ * Bir tıklanabilir ATANIN, asıl hedef düğüm yerine tıklanmasının makul olup olmadığı. Ata hedefle benzer
+ * boyutta (en çok 12 kat alan) ve ekranın %35'inden küçük olmalı; aksi halde (ekranı kaplayan kapsayıcı,
+ * tüm satır/liste) tıklama yanlış yere gider ve performAction yine de "true" döner.
+ */
+fun ancestorIsPlausibleTarget(nodeArea: Long, ancestorArea: Long, screenArea: Long): Boolean {
+    if (nodeArea <= 0L || ancestorArea <= 0L || screenArea <= 0L) return false
+    return ancestorArea <= nodeArea * 12 && ancestorArea * 100 <= screenArea * 35
+}
+
+/**
+ * Arama sonucu satırında kullanıcı adı metninin SOLUNDAKİ avatar adayları. Satıra (veya metne) dokunmak
+ * Snapchat'te SOHBET açar; profil için avatara dokunmak gerekir. Aday: ekran genişliğinin %5–25'i
+ * boyutunda, yaklaşık kare, metinle aynı hizada. En yakın (metne en yakın) önce gelir.
+ * Küçük durum simgeleri (kutucuk, ok) boyut sınırıyla elenir.
+ */
+fun resultAvatarCandidates(nodes: List<UiNode>, anchor: UiNode, screenWidth: Int): List<UiNode> {
+    if (screenWidth <= 0) return emptyList()
+    val minSide = (screenWidth * 0.05).toInt()
+    val maxSide = (screenWidth * 0.25).toInt()
+    val picked = nodes.filter { n ->
+        n.usable && n.enabled && n.index != anchor.index &&
+            n.centerX < anchor.left &&
+            n.width in minSide..maxSide && n.height in minSide..maxSide &&
+            Math.abs(n.width - n.height) <= maxOf(n.width, n.height) * 0.35 &&
+            n.centerY >= anchor.top - n.height && n.centerY <= anchor.bottom + n.height
+    }.sortedBy { anchor.left - it.right }
+    val reps = mutableListOf<UiNode>()
+    for (n in picked) if (reps.none { it.contains(n) || n.contains(it) }) reps.add(n)
+    return reps.take(2)
+}
+
+/** Ekranın kararlı imzası (görünür düğümlerin kimlik+metin özeti). Dokunuş etkisini "değişti/değişmedi" diye ölçmek için. */
+fun screenSignature(nodes: List<UiNode>): Int =
+    nodes.filter { it.usable }
+        .map { it.viewId.substringAfterLast('/') + "|" + it.text + "|" + it.desc }
+        .sorted().joinToString("\n").hashCode()
+
+/**
+ * "Arkadaşlıktan çıkar" onay penceresi hedef kullanıcıyı adıyla anıyor mu? Arkasındaki profilin kimlik
+ * satırı sayılmaz (o zaten ekranda kalır); yalnızca pencerenin kendi metni doğrulama sağlar.
+ * Gerçek metin: "nilgunoruc25 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?"
+ */
+fun dialogNamesUser(nodes: List<UiNode>, username: String): Boolean =
+    usernameVisible(nodes.filter { it.viewId.substringAfterLast('/') != PROFILE_USERNAME_ID }, username)
+
 /** Snapchat SOHBET ekranı işareti (mesaj kutusu veya "henüz arkadaş olarak eklemedi" bandı). */
 fun looksLikeChat(nodes: List<UiNode>, markers: List<String>): Boolean = containsAny(nodes, markers)
 
@@ -213,6 +259,8 @@ object Labels {
         "manage" to listOf("Manage Friendship", "Arkadaşlığı Yönet"),
         "removefriend" to listOf("Remove Friend", "Arkadaşı Sil", "Arkadaşı Kaldır"),
         "confirm" to listOf("Remove", "Kaldır"),
+        "cancel" to listOf("Cancel", "İptal et", "İptal"),
+        "sheetdone" to listOf("Done", "Tamamlandı"),
         "add" to listOf("Add", "Add Friend", "Ekle", "Arkadaş Ekle"),
         "pending" to listOf("Pending", "Beklemede", "Request Sent", "İstek Gönderildi"),
         "friendsince" to listOf("tarihinden beri arkadaş", "beri arkadaş", "friends since"),
