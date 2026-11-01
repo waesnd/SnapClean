@@ -57,3 +57,9 @@ Bundan çıkan kurallar (2.7):
 - Atlama sonrası açık kalan profil/sohbet ekranından arama simgesine dönmek için en fazla 6 kez GERİ gönderilir.
 - Bilinen eksik: karşılıklı arkadaşın sohbetinden olumsuz kontrol kaydı yok; bant yalnızca "görülürse ilerle" şeklinde kullanılır.
 - Doğrudan bağlantı (snapchat.com/add/<kullanıcı>) profile hızlı gider ama sohbet bandını göstermez; profilde ayırt edici bir işaret bulunana kadar arama→sohbet yolu korunur.
+
+## 2.9-beta — yazısız onay düğmesi
+
+- Gerçek dökümde (e256002) onay penceresinde "Kaldır" yazısı yoktur: `alert_dialog_title` + `dialog_content` içinde yazısız tıklanabilir bir View + `cancel_button`. 2.8'de adım bu yüzden ilerlemedi.
+- Pencere başlıktan ("arkadaşlıktan çıkarmak" + kullanıcı adı) tanınır; düğme, başlığın altındaki ve "İptal et"in üstündeki TEK tıklanabilir düğümdür (birden fazlaysa durur).
+- ACTION_CLICK bir kez etkisiz kalırsa sonraki dokunuşlar doğrudan HAREKET (dispatchGesture) ile yapılır.

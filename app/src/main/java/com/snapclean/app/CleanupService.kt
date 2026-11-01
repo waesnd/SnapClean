@@ -98,6 +98,7 @@ class CleanupService : AccessibilityService() {
     private var resultTapMode = 0
     private var lastTapHow = ""
     private var tapSig = 0
+    private var preferGesture = false
     private var tapAt = 0L
     private var gestureCancels = 0
     private var chatDumped = false
@@ -401,7 +402,12 @@ class CleanupService : AccessibilityService() {
         publishRead(screen, now)
         val nodes = screen.nodes
         if (tapSig != 0 && now - tapAt > 1200L) {
-            appendLog("dokunuş etkisi [$lastTapHow]: " + if (screenSignature(nodes) != tapSig) "ekran değişti" else "ekran DEĞİŞMEDİ")
+            val changed = screenSignature(nodes) != tapSig
+            appendLog("dokunuş etkisi [$lastTapHow]: " + if (changed) "ekran değişti" else "ekran DEĞİŞMEDİ")
+            if (!changed && lastTapHow.startsWith("ACTION_CLICK") && !preferGesture) {
+                preferGesture = true // bu cihazda ACTION_CLICK etkisiz kaldı: sonraki dokunuşlar doğrudan hareketle
+                appendLog("ACTION_CLICK etkisiz; sonraki dokunuşlar önce HAREKET ile yapılacak")
+            }
             tapSig = 0
         }
 
@@ -453,7 +459,7 @@ class CleanupService : AccessibilityService() {
                 }
                 val target = targets[(attempts / 2).coerceAtMost(targets.size - 1)]
                 if (!isStable("menu", target, now)) { status("Menü düğmesi yerleşiyor: $username"); return }
-                val viaGesture = attempts % 2 == 1
+                val viaGesture = preferGesture || attempts % 2 == 1
                 val ok = tapNode(screen, target, viaGesture)
                 attempts++
                 lastActionAt = now
@@ -468,7 +474,7 @@ class CleanupService : AccessibilityService() {
 
             Step.REMOVE_FRIEND -> {
                 if (!requireVerified(username, screen)) return
-                if (isPresent(nodes, lbl("confirm"))) { enter(Step.CONFIRM, now); return }
+                if (removeDialogVisible(nodes, labels) || isPresent(nodes, lbl("confirm"))) { enter(Step.CONFIRM, now); return }
                 actOnLabel(username, now, screen, "removefriend", "Arkadaşı Sil")
             }
 
@@ -694,13 +700,17 @@ class CleanupService : AccessibilityService() {
         if (!requireVerified(username, screen)) return
         val nodes = screen.nodes
         if (verifySuccess(nodes, username)) { complete(username); return }
-        when (val m = findExact(nodes, lbl("confirm"))) {
+        when (val m = findConfirmButton(nodes, labels)) {
             is Match.None -> {
                 if (attempts > 0) enter(Step.VERIFY, now) // iletişim kutusu kapandı; sonucu doğrula
                 else stepWait(username, now, screen, "onay iletişim kutusu bekleniyor")
             }
             is Match.Many -> failStep(username, "onay düğmesi için ${m.nodes.size} belirsiz eşleşme; dokunulmadı", screen)
             is Match.One -> {
+                if (!removeDialogVisible(nodes, labels) && m.node.text.isEmpty() && m.node.desc.isEmpty()) {
+                    failStep(username, "yazısız onay düğmesi ama pencere başlığı 'arkadaşlıktan çıkar' değil; BASILMADI", screen)
+                    return
+                }
                 if (!dialogNamesUser(nodes, username)) {
                     failStep(username, "onay penceresi hedef kullanıcı adını göstermiyor; 'Kaldır'a BASILMADI", screen)
                     return
@@ -714,7 +724,7 @@ class CleanupService : AccessibilityService() {
                 if (waitingForRetry(now)) return
                 if (attempts >= step.maxAttempts) { failStep(username, "onay düğmesine basıldı ama ekran değişmedi", screen); return }
                 if (attempts == 0) dumpScreen("ONAY-ONCESI", screen)
-                val viaGesture = attempts % 2 == 1
+                val viaGesture = preferGesture || attempts % 2 == 1
                 val ok = tapNode(screen, m.node, viaGesture)
                 attempts++
                 lastActionAt = now
@@ -824,7 +834,7 @@ class CleanupService : AccessibilityService() {
                 if (!isStable(step.name + ":" + key, m.node, now)) { status("$what yerleşiyor"); return }
                 if (attempts >= step.maxAttempts) { failStep(username, "$what $attempts denemede ekranı değiştirmedi", screen); return }
                 if (attempts == 0) dumpScreen("${step.name}-ONCESI", screen)
-                val viaGesture = attempts % 2 == 1
+                val viaGesture = preferGesture || attempts % 2 == 1
                 val ok = tapNode(screen, m.node, viaGesture)
                 attempts++
                 lastActionAt = now
@@ -837,7 +847,7 @@ class CleanupService : AccessibilityService() {
         dumpScreen("KURU-ONAY-EKRANI", screen)
         dryCount++
         val cancel = findExact(screen.nodes, lbl("cancel"))
-        if (cancel is Match.One) tapNode(screen, cancel.node, false) else performGlobalAction(GLOBAL_ACTION_BACK)
+        if (cancel is Match.One) tapNode(screen, cancel.node, true) else performGlobalAction(GLOBAL_ACTION_BACK)
         status("KURU ÇALIŞTIRMA tamam: $username için akış onay ekranına kadar çalıştı, 'Kaldır'a BASILMADI")
         advanceAfter(1800L, 3000L)
     }

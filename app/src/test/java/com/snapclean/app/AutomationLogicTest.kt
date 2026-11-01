@@ -322,4 +322,46 @@ class AutomationLogicTest {
         assertTrue(isProfileOrChatScreen(mutualChat(), Labels.defaults["chat"].orEmpty()))
         assertFalse(isProfileOrChatScreen(listOf(node(text = "Arkadaşlar")), Labels.defaults["chat"].orEmpty()))
     }
+
+    // Gerçek e256002 dökümü (2.8-beta): onay penceresinde "Kaldır" yazısı YOK, yazısız tıklanabilir View var.
+    private fun realUnlabeledConfirm() = listOf(
+        node(index = 0, l = 145, t = 963, r = 1075, b = 1727, clickable = true, id = "x:id/0_resource_name_obfuscated"),
+        node(index = 1, l = 241, t = 1035, r = 979, b = 1655, id = "x:id/dialog_content"),
+        node(text = "e256002 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden", index = 2, l = 241, t = 1035, r = 979, b = 1274, id = "x:id/alert_dialog_title"),
+        node(index = 3, l = 241, t = 1322, r = 979, b = 1481, clickable = true),
+        node(text = "İptal et", index = 4, l = 241, t = 1505, r = 979, b = 1655, clickable = true, id = "x:id/cancel_button")
+    )
+
+    @Test fun removeDialogRecognizedByTitle() {
+        assertTrue(removeDialogVisible(realUnlabeledConfirm(), labels))
+        assertFalse(removeDialogVisible(oneWayChat(), labels))
+    }
+
+    @Test fun unlabeledConfirmButtonFoundGeometrically() {
+        val m = findConfirmButton(realUnlabeledConfirm(), labels)
+        assertTrue(m is Match.One)
+        assertEquals(3, (m as Match.One).node.index)
+    }
+
+    @Test fun cancelButtonIsNeverTheConfirmTarget() {
+        val onlyCancel = realUnlabeledConfirm().filter { it.index != 3 }
+        assertTrue(findConfirmButton(onlyCancel, labels) is Match.None)
+    }
+
+    @Test fun twoClickablesInDialogAreAmbiguous() {
+        val two = realUnlabeledConfirm() + node(index = 5, l = 300, t = 1330, r = 900, b = 1470, clickable = true)
+        assertTrue(findConfirmButton(two, labels) is Match.Many)
+    }
+
+    @Test fun labeledKaldirStillWins() {
+        val withLabel = realUnlabeledConfirm() + node(text = "Kaldır", index = 6, l = 300, t = 1340, r = 900, b = 1460)
+        val m = findConfirmButton(withLabel, labels)
+        assertTrue(m is Match.One)
+        assertEquals(6, (m as Match.One).node.index)
+    }
+
+    @Test fun dialogNamesUserWorksOnRealTitle() {
+        assertTrue(dialogNamesUser(realUnlabeledConfirm(), "e256002"))
+        assertFalse(dialogNamesUser(realUnlabeledConfirm(), "baskakisi"))
+    }
 }

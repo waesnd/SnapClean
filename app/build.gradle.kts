@@ -6,7 +6,7 @@ plugins {
 android {
  namespace = "com.snapclean.app"
  compileSdk = 35
- defaultConfig { applicationId = "com.snapclean.app"; minSdk = 26; targetSdk = 35; versionCode = 10; versionName = "2.8-beta" }
+ defaultConfig { applicationId = "com.snapclean.app"; minSdk = 26; targetSdk = 35; versionCode = 11; versionName = "2.9-beta" }
  signingConfigs {
   create("stableRelease") {
    val path = System.getenv("SNAPCLEAN_KEYSTORE_PATH")

@@ -246,6 +246,38 @@ fun screenSignature(nodes: List<UiNode>): Int =
 fun dialogNamesUser(nodes: List<UiNode>, username: String): Boolean =
     usernameVisible(nodes.filter { it.viewId.substringAfterLast('/') != PROFILE_USERNAME_ID }, username)
 
+const val DIALOG_TITLE_ID = "alert_dialog_title"
+const val DIALOG_CANCEL_ID = "cancel_button"
+const val DIALOG_CONTENT_ID = "dialog_content"
+
+private fun idOf(n: UiNode) = n.viewId.substringAfterLast('/')
+
+/**
+ * "…adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?" penceresi açık mı? (gerçek id: alert_dialog_title)
+ * Gerçek dökümde bu pencerenin "Kaldır" düğmesi YAZISIZ bir View'dur; bu yüzden pencere başlıktan tanınır.
+ */
+fun removeDialogVisible(nodes: List<UiNode>, labels: Map<String, List<String>>): Boolean {
+    val title = nodes.firstOrNull { it.usable && idOf(it) == DIALOG_TITLE_ID } ?: return false
+    return containsAny(listOf(title), labels["removetitle"].orEmpty())
+}
+
+/**
+ * Onay düğmesi: önce "Kaldır" yazısı; yoksa pencerenin içindeki, başlığın altında ve "İptal et"in üstündeki
+ * TEK tıklanabilir düğüm (gerçek dökümde: dialog_content içindeki yazısız View). Birden fazlaysa Many.
+ */
+fun findConfirmButton(nodes: List<UiNode>, labels: Map<String, List<String>>): Match {
+    val byLabel = findExact(nodes, labels["confirm"].orEmpty())
+    if (byLabel !is Match.None) return byLabel
+    val content = nodes.firstOrNull { it.usable && idOf(it) == DIALOG_CONTENT_ID } ?: return Match.None
+    val title = nodes.firstOrNull { it.usable && idOf(it) == DIALOG_TITLE_ID } ?: return Match.None
+    val cancel = nodes.firstOrNull { it.usable && idOf(it) == DIALOG_CANCEL_ID }
+    val cands = nodes.filter { n ->
+        n.usable && n.clickable && n.enabled && idOf(n) != DIALOG_CANCEL_ID && n.index != content.index &&
+            content.contains(n) && n.top >= title.bottom && (cancel == null || n.bottom <= cancel.top)
+    }
+    return when (cands.size) { 0 -> Match.None; 1 -> Match.One(cands[0]); else -> Match.Many(cands) }
+}
+
 /** Snapchat SOHBET ekranı işareti (mesaj kutusu veya "henüz arkadaş olarak eklemedi" bandı). */
 fun looksLikeChat(nodes: List<UiNode>, markers: List<String>): Boolean = containsAny(nodes, markers)
 
@@ -285,6 +317,7 @@ object Labels {
         "pending" to listOf("Pending", "Beklemede", "Request Sent", "İstek Gönderildi"),
         "friendsince" to listOf("tarihinden beri arkadaş", "beri arkadaş", "friends since"),
         "chat" to listOf("Mesaj Gönder", "Send a chat", "Send a message", "henüz arkadaş olarak eklemedi"),
+        "removetitle" to listOf("arkadaşlıktan çıkarmak", "arkadaşlıktan çıkar", "unfriend", "remove as a friend", "remove as friend"),
         "oneway" to listOf("seni henüz arkadaş olarak eklemedi", "henüz arkadaş olarak eklemedi", "hasn't added you", "has not added you")
     )
 
