@@ -278,6 +278,15 @@ fun findConfirmButton(nodes: List<UiNode>, labels: Map<String, List<String>>): M
     return when (cands.size) { 0 -> Match.None; 1 -> Match.One(cands[0]); else -> Match.Many(cands) }
 }
 
+/**
+ * Arama ekranı (düzenlenebilir alan + "İptal Et") açık kalmışsa o düğme; onay penceresinin "İptal et"i (cancel_button) sayılmaz.
+ * Gerçek döküm: GERİ tuşları profil→sohbet→ARAMA SONUÇLARI ekranına döner, orada arama simgesi yoktur.
+ */
+fun searchCancelButton(nodes: List<UiNode>, labels: Map<String, List<String>>, hasEditable: Boolean): Match {
+    if (!hasEditable || removeDialogVisible(nodes, labels)) return Match.None
+    return findExact(nodes.filter { idOf(it) != DIALOG_CANCEL_ID }, labels["cancel"].orEmpty())
+}
+
 /** Snapchat SOHBET ekranı işareti (mesaj kutusu veya "henüz arkadaş olarak eklemedi" bandı). */
 fun looksLikeChat(nodes: List<UiNode>, markers: List<String>): Boolean = containsAny(nodes, markers)
 

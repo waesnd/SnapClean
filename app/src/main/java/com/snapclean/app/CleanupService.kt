@@ -524,6 +524,17 @@ class CleanupService : AccessibilityService() {
                 status("Bağlantı profil açmadı; Snapchat aramasına geçiliyor: $username")
                 return true
             }
+            if (search == null) {
+                val hasEditable = nodes.any { n -> n.usable && screen.refs.getOrNull(n.index)?.isEditable == true }
+                val cancelSearch = searchCancelButton(nodes, labels, hasEditable)
+                if (cancelSearch is Match.One) {
+                    // Arama sonuçları ekranı açık kaldı: "İptal Et" ile arama simgesi olan listeye dön.
+                    tapNode(screen, cancelSearch.node, true)
+                    searchActionAt = now
+                    status("Eski arama ekranı kapatılıyor ('İptal Et'): $username")
+                    return true
+                }
+            }
             if (search == null && isProfileOrChatScreen(nodes, lbl("chat"))) {
                 // Önceki hesabın profili/sohbeti açık kalmış: arama simgesi olan ekrana geri dön.
                 if (backPresses < 6 && now - lastBackAt > 1800L) {

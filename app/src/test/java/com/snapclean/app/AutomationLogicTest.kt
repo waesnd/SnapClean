@@ -364,4 +364,22 @@ class AutomationLogicTest {
         assertTrue(dialogNamesUser(realUnlabeledConfirm(), "e256002"))
         assertFalse(dialogNamesUser(realUnlabeledConfirm(), "baskakisi"))
     }
+
+    private fun staleSearchScreen() = listOf(
+        node(text = "gulsumcanayaz24", index = 0, l = 100, t = 130, r = 900, b = 260),
+        node(text = "İptal Et", index = 1, l = 950, t = 130, r = 1190, b = 260),
+        node(text = "Arkadaşlar ve Gruplar", index = 2, l = 40, t = 300, r = 900, b = 360),
+        node(text = "Gülsüm Canayaz", index = 3, l = 300, t = 400, r = 900, b = 470)
+    )
+
+    @Test fun staleSearchScreenCancelButtonFound() {
+        val m = searchCancelButton(staleSearchScreen(), labels, true)
+        assertTrue(m is Match.One)
+        assertEquals(1, (m as Match.One).node.index)
+    }
+
+    @Test fun searchCancelIgnoredWithoutEditableOrInRemoveDialog() {
+        assertTrue(searchCancelButton(staleSearchScreen(), labels, false) is Match.None)
+        assertTrue(searchCancelButton(realUnlabeledConfirm(), labels, true) is Match.None)
+    }
 }
