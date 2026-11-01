@@ -286,4 +286,40 @@ class AutomationLogicTest {
         val noName = listOf(node(text = "Kaldır", index = 1), identity)
         assertFalse(dialogNamesUser(noName, "nilgunoruc25"))
     }
+
+    private fun oneWayChat() = listOf(
+        node(text = "Sema🎀", index = 0),
+        node(text = "Sema🎀 seni henüz arkadaş olarak eklemedi. Arkadaş olarak ekleyene kadar senin mesajlarını göremez.", index = 1)
+    )
+    private fun mutualChat() = listOf(
+        node(text = "Kazi", index = 0),
+        node(text = "Mesaj Gönder", index = 1)
+    )
+
+    @Test fun oneWayBannerSeenOnlyInOneWayChat() {
+        assertTrue(oneWayBannerVisible(oneWayChat(), labels))
+        assertFalse(oneWayBannerVisible(mutualChat(), labels))
+    }
+
+    @Test fun friendSinceTextAloneIsNeverProofOfOneWay() {
+        val p = realFriendProfile()
+        assertEquals(ProfileVerdict.MUTUAL_FRIEND, classifyProfile(p, "nilgunoruc25", labels))
+    }
+
+    @Test fun friendSinceWithChatProofIsAllowedToProceed() {
+        val p = realFriendProfile()
+        assertEquals(ProfileVerdict.PENDING_OK, classifyProfile(p, "nilgunoruc25", labels, oneWayProven = true))
+    }
+
+    @Test fun proofNeverOverridesWrongProfile() {
+        val p = realFriendProfile()
+        assertEquals(ProfileVerdict.USERNAME_MISSING, classifyProfile(p, "baskakisi", labels, oneWayProven = true))
+    }
+
+    @Test fun profileOrChatScreenDetection() {
+        assertTrue(isProfileOrChatScreen(realFriendProfile(), Labels.defaults["chat"].orEmpty()))
+        assertTrue(isProfileOrChatScreen(oneWayChat(), Labels.defaults["chat"].orEmpty()))
+        assertTrue(isProfileOrChatScreen(mutualChat(), Labels.defaults["chat"].orEmpty()))
+        assertFalse(isProfileOrChatScreen(listOf(node(text = "Arkadaşlar")), Labels.defaults["chat"].orEmpty()))
+    }
 }

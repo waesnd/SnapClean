@@ -141,10 +141,13 @@ enum class ProfileVerdict { USERNAME_MISSING, MUTUAL_FRIEND, NOT_FRIEND_ADD, PEN
  * istek" işareti varsa silmeye izin verilir. "Ekle" görünüyorsa zaten arkadaş değildir (atla).
  * İkisi de yoksa karşılıklı arkadaş olabilir; dokunulmaz.
  */
-fun classifyProfile(nodes: List<UiNode>, username: String, labels: Map<String, List<String>>): ProfileVerdict {
+fun classifyProfile(
+    nodes: List<UiNode>,
+    username: String,
+    labels: Map<String, List<String>>,
+    oneWayProven: Boolean = false
+): ProfileVerdict {
     if (!profileUsernameVisible(nodes, username)) return ProfileVerdict.USERNAME_MISSING
-    // Karşılıklı arkadaşlık yazısı varsa kesinlikle dokunma (örn. "... tarihinden beri arkadaş").
-    if (containsAny(nodes, labels["friendsince"].orEmpty())) return ProfileVerdict.MUTUAL_FRIEND
     // Suggested-friends cards can contain "Add"; only trust the target profile action.
     val targetActions = nodes.filter { n ->
         n.usable && n.viewId.substringAfterLast('/').contains("non_friend_action_button")
@@ -152,8 +155,25 @@ fun classifyProfile(nodes: List<UiNode>, username: String, labels: Map<String, L
     val addLabels = labels["add"].orEmpty().map(::fold).toSet()
     if (targetActions.any { n -> n.rawLabels.any { fold(it) in addLabels } }) return ProfileVerdict.NOT_FRIEND_ADD
     if (isPresent(nodes, labels["pending"].orEmpty())) return ProfileVerdict.PENDING_OK
+    // "… tarihinden beri arkadaşsın" yazısı TEK TARAFLI hesaplarda da çıkar (videoda doğrulandı): tek başına
+    // ne karşılıklılık ne tek taraflılık kanıtıdır. Kanıt, sohbetteki "seni henüz arkadaş olarak eklemedi" bandıdır.
+    if (oneWayProven) return ProfileVerdict.PENDING_OK
+    if (containsAny(nodes, labels["friendsince"].orEmpty())) return ProfileVerdict.MUTUAL_FRIEND
     return ProfileVerdict.UNKNOWN_STATE
 }
+
+/**
+ * Sohbet ekranında Snapchat'in "X seni henüz arkadaş olarak eklemedi" bandı var mı? Bu bant yalnızca karşı taraf
+ * seni geri eklememişken görünür; gerçek ekran kaydında 4/4 hedef hesapta vardı. Karşılıklı arkadaşta çıkmaması
+ * beklenir ama bunun için olumsuz kontrol kaydı henüz yok: bu yüzden yalnızca bant GÖRÜLÜRSE ilerlenir.
+ */
+fun oneWayBannerVisible(nodes: List<UiNode>, labels: Map<String, List<String>>): Boolean =
+    containsAny(nodes, labels["oneway"].orEmpty())
+
+/** Profil veya sohbet ekranında mıyız? (Arama simgesi yoksa geri tuşuyla ana listeye dönmek için.) */
+fun isProfileOrChatScreen(nodes: List<UiNode>, chatMarkers: List<String>): Boolean =
+    nodes.any { it.usable && it.viewId.substringAfterLast('/') == PROFILE_USERNAME_ID } ||
+        containsAny(nodes, chatMarkers)
 
 /**
  * Etiketsiz "..." düğmesi için aday sıralaması: sağ üst bölgedeki, simge boyutunda yaprak veya
@@ -264,7 +284,8 @@ object Labels {
         "add" to listOf("Add", "Add Friend", "Ekle", "Arkadaş Ekle"),
         "pending" to listOf("Pending", "Beklemede", "Request Sent", "İstek Gönderildi"),
         "friendsince" to listOf("tarihinden beri arkadaş", "beri arkadaş", "friends since"),
-        "chat" to listOf("Mesaj Gönder", "Send a chat", "Send a message", "henüz arkadaş olarak eklemedi")
+        "chat" to listOf("Mesaj Gönder", "Send a chat", "Send a message", "henüz arkadaş olarak eklemedi"),
+        "oneway" to listOf("seni henüz arkadaş olarak eklemedi", "henüz arkadaş olarak eklemedi", "hasn't added you", "has not added you")
     )
 
     fun defaultText(): String = defaults.entries.joinToString("\n") { (k, v) -> k + "=" + v.joinToString(",") }

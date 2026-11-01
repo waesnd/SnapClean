@@ -49,3 +49,11 @@ Bundan çıkan kurallar (2.7):
 - **Geçici belirsizlik:** İki alt sayfa geçişte aynı etiketi birlikte gösterebilir; belirsizlik 2,5 sn sürerse durur.
 - **Silme sonrası doğrulama:** "Kaldır"dan sonra Snapchat profile dönmeyebilir. Profil aramayla yeniden açılır ve "Ekle" görülünce `done` yazılır; açık kalan "Tamamlandı" sayfası kapatılır.
 - **Kuru çalıştırma:** Onay penceresinde "İptal et"e basılır, sonra kalan sayfa kapatılır.
+
+## 2.8-beta — tek taraflılık kanıtı (sohbet bandı)
+
+- "… tarihinden beri arkadaşsın" metni karşılıklı VE tek taraflı arkadaşta çıkar; artık karşılıklılık işareti sayılmaz ve tek başına silme izni vermez.
+- Silme izni için sohbet ekranında "<ad> seni henüz arkadaş olarak eklemedi" bandı GÖRÜLMÜŞ olmalıdır (`chatProof`). Bant görülmezse hesap dokunulmadan "inceleme" listesine yazılır (durum "atlandı" yapılmaz) ve sıradakine geçilir; ardışık 20 incelemede oturum durur.
+- Atlama sonrası açık kalan profil/sohbet ekranından arama simgesine dönmek için en fazla 6 kez GERİ gönderilir.
+- Bilinen eksik: karşılıklı arkadaşın sohbetinden olumsuz kontrol kaydı yok; bant yalnızca "görülürse ilerle" şeklinde kullanılır.
+- Doğrudan bağlantı (snapchat.com/add/<kullanıcı>) profile hızlı gider ama sohbet bandını göstermez; profilde ayırt edici bir işaret bulunana kadar arama→sohbet yolu korunur.

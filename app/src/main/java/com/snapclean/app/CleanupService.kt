@@ -86,6 +86,10 @@ class CleanupService : AccessibilityService() {
     private var launchRetried = false
     private var searchStage = 0
     private var chatTaps = 0
+    private var chatProof = false
+    private var chatSeenAt = 0L
+    private var backPresses = 0
+    private var lastBackAt = 0L
     private var stabKey = ""
     private var stabRect = ""
     private var stabAt = 0L
@@ -203,6 +207,7 @@ class CleanupService : AccessibilityService() {
         manualProfileStarted = SystemClock.uptimeMillis()
         searchStage = 0
         chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0; gestureCancels = 0
+        chatProof = false; chatSeenAt = 0L; backPresses = 0; lastBackAt = 0L
         searchActionAt = 0L
         stepStartedAt = manualProfileStarted
         if (!launchProfile(username)) {
@@ -318,6 +323,7 @@ class CleanupService : AccessibilityService() {
         launchRetried = false
         searchStage = 0
         chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0; gestureCancels = 0
+        chatProof = false; chatSeenAt = 0L; backPresses = 0; lastBackAt = 0L
         searchActionAt = 0L
         unknownSince = 0L
         profileDumped = false
@@ -481,7 +487,7 @@ class CleanupService : AccessibilityService() {
                     if (waited > 3000L) {
                         if (!verifyReopened) {
                             verifyReopened = true
-                            searchStage = 0; chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0
+                            searchStage = 0; chatTaps = 0; chatDumped = false; resultDumped = false; resultTapMode = 0; backPresses = 0; lastBackAt = 0L
                             searchActionAt = 0L
                             status("Silme sonrası doğrulama için profil aramayla yeniden açılıyor: $username")
                         }
@@ -510,6 +516,16 @@ class CleanupService : AccessibilityService() {
                 searchStage = 1
                 searchActionAt = now
                 status("Bağlantı profil açmadı; Snapchat aramasına geçiliyor: $username")
+                return true
+            }
+            if (search == null && isProfileOrChatScreen(nodes, lbl("chat"))) {
+                // Önceki hesabın profili/sohbeti açık kalmış: arama simgesi olan ekrana geri dön.
+                if (backPresses < 6 && now - lastBackAt > 1800L) {
+                    backPresses++
+                    lastBackAt = now
+                    performGlobalAction(GLOBAL_ACTION_BACK)
+                    status("Aramaya dönmek için geri ($backPresses/6): $username")
+                }
                 return true
             }
             return false
@@ -563,6 +579,27 @@ class CleanupService : AccessibilityService() {
         // hedef kullanıcıyı gösterirse ilerlenir. Başka bir sonuca asla dokunulmaz.
         if (looksLikeChat(nodes, lbl("chat"))) {
             if (!chatDumped) { chatDumped = true; dumpScreen("SOHBET-EKRANI", screen) }
+            // KANIT KAPISI (yalnızca silme öncesi PROFILE adımında): bant görülürse tek taraflılık kanıtlanır,
+            // 4 sn içinde görülmezse karşılıklı arkadaş olabilir: profile geçilmez, silme denenmez.
+            if (running && step == Step.PROFILE && !chatProof) {
+                if (chatSeenAt == 0L) chatSeenAt = now
+                if (oneWayBannerVisible(nodes, labels)) {
+                    chatProof = true
+                    appendLog("KANIT: sohbette 'henüz arkadaş olarak eklemedi' bandı görüldü: $username")
+                } else if (now - chatSeenAt < 4000L) {
+                    status("Sohbet açıldı; tek taraflılık bandı bekleniyor: $username")
+                    return true
+                } else {
+                    dumpScreen("SOHBET-BANT-YOK", screen)
+                    addFailed(username, "sohbette 'henüz arkadaş olarak eklemedi' bandı yok; karşılıklı arkadaş olabilir, dokunulmadı")
+                    reviewCount++
+                    consecutiveReview++
+                    status("Bant yok (karşılıklı olabilir), DOKUNULMADI: $username")
+                    if (consecutiveReview >= 20) stop("Art arda 20 hesapta sohbet bandı bulunamadı. Teşhisi kopyala ve gönder.")
+                    else advanceAfter(1200L, 2200L)
+                    return true
+                }
+            }
             if (chatTaps >= 4) {
                 searchFail(username, "sohbet başlığına $chatTaps kez dokunuldu ama profil açılmadı", screen)
                 return true
@@ -602,7 +639,7 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun onProfile(username: String, now: Long, screen: Screen) {
-        when (classifyProfile(screen.nodes, username, labels)) {
+        when (classifyProfile(screen.nodes, username, labels, chatProof)) {
             ProfileVerdict.USERNAME_MISSING -> {
                 unknownSince = 0L
                 if (!profileDumped && now - stepStartedAt > 6000L) {
@@ -612,11 +649,14 @@ class CleanupService : AccessibilityService() {
                 stepWait(username, now, screen, "kullanıcı adı ağaçta görünmüyor; görülen: " + sample(screen.nodes))
             }
             ProfileVerdict.MUTUAL_FRIEND -> {
-                markStatus(username, "skipped")
-                skippedCount++
-                consecutiveReview = 0
-                status("Karşılıklı arkadaş, DOKUNULMADI: $username")
-                advanceAfter(1200L, 2200L)
+                // Kayıt "Atlanan" yapılmaz: yalnızca bu oturumda kanıt bulunamadı, durum değişmedi.
+                dumpScreen("KANIT-YOK", screen)
+                addFailed(username, "arkadaş görünüyor ama tek taraflılık kanıtı (sohbet bandı) yok; karşılıklı olabilir, dokunulmadı")
+                reviewCount++
+                consecutiveReview++
+                status("Tek taraflılık kanıtı yok, DOKUNULMADI: $username")
+                if (consecutiveReview >= 20) stop("Art arda 20 hesapta kanıt bulunamadı. Teşhisi kopyala ve gönder.")
+                else advanceAfter(1200L, 2200L)
             }
             ProfileVerdict.NOT_FRIEND_ADD -> {
                 markStatus(username, "skipped")
