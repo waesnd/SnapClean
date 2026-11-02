@@ -67,3 +67,8 @@ Bundan çıkan kurallar (2.7):
 ## 2.9.1-beta — eski arama ekranı
 
 - Gerçek log (gulsumcanayaz24 kuru çalıştırma tamam, sonra aysel20267118): GERİ tuşları profil→sohbet→ARAMA SONUÇLARI ekranına döner; orada arama simgesi yoktur. Artık düzenlenebilir alan + "İptal Et" görülürse `İptal Et`e hareketle basılır, sonra liste ekranından normal arama başlar.
+
+## 2.9.2-beta — silme doğrulaması
+
+- Silme sonrası gerçek eylem düğmesi etiketi henüz gözlenmedi (silmeden önce `Snap`). Doğrulama: hedef profil görünür + "beri arkadaşsın" satırı yok + düğme "Ekle" VEYA silmeden önceki etikete eşit olmayan başka bir etiket. Gerçek etiket günlüğe "DOĞRULAMA: eylem düğmesi 'Snap' → '…'" olarak yazılır.
+- CI artık `main`'e her push'ta derler ve birim testlerini çalıştırır (APK: Actions → son çalışma → SnapClean-debug).

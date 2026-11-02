@@ -87,6 +87,7 @@ class CleanupService : AccessibilityService() {
     private var searchStage = 0
     private var chatTaps = 0
     private var chatProof = false
+    private var preActionLabel = ""
     private var chatSeenAt = 0L
     private var backPresses = 0
     private var lastBackAt = 0L
@@ -700,6 +701,7 @@ class CleanupService : AccessibilityService() {
             ProfileVerdict.PENDING_OK -> {
                 profileVerified = true
                 profileVerifiedAt = now
+                preActionLabel = targetActionLabel(screen.nodes)
                 consecutiveReview = 0
                 dumpScreen("PROFIL-DOGRULANDI", screen)
                 enter(Step.OPEN_MENU, now)
@@ -817,15 +819,9 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun verifySuccess(nodes: List<UiNode>, username: String): Boolean {
-        if (!onTargetProfile(nodes, username)) return false
-        if (containsAny(nodes, lbl("friendsince"))) return false
-        // Suggested friends also have Add buttons: never treat them as removal proof.
-        val actions = nodes.filter { node ->
-            node.usable && node.viewId.substringAfterLast('/').contains("non_friend_action_button")
-        }
-        return actions.any { node ->
-            node.rawLabels.any { label -> lbl("add").any { fold(label) == fold(it) } }
-        }
+        val ok = removalVerified(nodes, username, labels, preActionLabel)
+        if (ok) appendLog("DOĞRULAMA: eylem düğmesi '${preActionLabel}' → '${targetActionLabel(nodes)}', 'beri arkadaşsın' satırı yok")
+        return ok
     }
 
     /** Etiketle bulunan tek bir düğmeye basar; belirsizse (birden fazla) güvenle durur. */

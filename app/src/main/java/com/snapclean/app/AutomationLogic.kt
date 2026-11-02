@@ -287,6 +287,25 @@ fun searchCancelButton(nodes: List<UiNode>, labels: Map<String, List<String>>, h
     return findExact(nodes.filter { idOf(it) != DIALOG_CANCEL_ID }, labels["cancel"].orEmpty())
 }
 
+/** Hedef profildeki ana eylem düğmesinin etiketi (gerçek döküm: non_friend_action_button_single, desc='Snap'); yoksa "". */
+fun targetActionLabel(nodes: List<UiNode>): String =
+    nodes.firstOrNull { it.usable && idOf(it).contains("non_friend_action_button") }?.rawLabels?.firstOrNull().orEmpty()
+
+/**
+ * Silme doğrulaması: hedef profil görünür, "…tarihinden beri arkadaşsın" satırı GİTMİŞ ve ana eylem düğmesi ya
+ * "Ekle" olmuş ya da silmeden önceki etiketten (ör. "Snap") farklı bir etikete dönmüş olmalı.
+ * (Silme sonrası gerçek etiket henüz hiç kaydedilmedi; bu yüzden ikisi de kabul edilir ve etiket günlüğe yazılır.)
+ */
+fun removalVerified(nodes: List<UiNode>, username: String, labels: Map<String, List<String>>, preLabel: String): Boolean {
+    if (!onTargetProfile(nodes, username)) return false
+    if (containsAny(nodes, labels["friendsince"].orEmpty())) return false
+    val now = targetActionLabel(nodes)
+    if (now.isEmpty()) return false
+    val add = labels["add"].orEmpty().map(::fold).toSet()
+    if (fold(now) in add) return true
+    return preLabel.isNotEmpty() && fold(now) != fold(preLabel)
+}
+
 /** Snapchat SOHBET ekranı işareti (mesaj kutusu veya "henüz arkadaş olarak eklemedi" bandı). */
 fun looksLikeChat(nodes: List<UiNode>, markers: List<String>): Boolean = containsAny(nodes, markers)
 

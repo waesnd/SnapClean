@@ -382,4 +382,26 @@ class AutomationLogicTest {
         assertTrue(searchCancelButton(staleSearchScreen(), labels, false) is Match.None)
         assertTrue(searchCancelButton(realUnlabeledConfirm(), labels, true) is Match.None)
     }
+
+    private fun profileWith(actionDesc: String, extra: List<UiNode> = emptyList()) = listOf(
+        node(text = "e256002", index = 0, id = "x:id/profile_identity_section_username", l = 321, t = 668, r = 474, b = 717),
+        node(desc = actionDesc, index = 1, id = "x:id/non_friend_action_button_single", l = 48, t = 895, r = 1171, b = 1027)
+    ) + extra
+
+    @Test fun removalVerifiedWhenSinceLineGoneAndButtonChanged() {
+        assertTrue(removalVerified(profileWith("Ekle"), "e256002", labels, "Snap"))
+        assertTrue(removalVerified(profileWith("Arkadaş olarak ekle"), "e256002", labels, "Snap"))
+    }
+
+    @Test fun removalNotVerifiedWhileStillFriend() {
+        val since = node(text = "E adlı kişiyle 26 Ağustos 2026 tarihinden beri arkadaşsın.", index = 2)
+        assertFalse(removalVerified(profileWith("Ekle", listOf(since)), "e256002", labels, "Snap"))
+        assertFalse(removalVerified(profileWith("Snap"), "e256002", labels, "Snap"))
+        assertFalse(removalVerified(profileWith("Snap"), "baskakisi", labels, "Snap"))
+    }
+
+    @Test fun targetActionLabelReadsRealButton() {
+        assertEquals("Snap", targetActionLabel(profileWith("Snap")))
+        assertEquals("", targetActionLabel(listOf(node(text = "x"))))
+    }
 }
