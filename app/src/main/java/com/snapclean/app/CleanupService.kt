@@ -40,7 +40,7 @@ class CleanupService : AccessibilityService() {
 
     private companion object {
         const val SNAP = "com.snapchat.android"
-        const val TICK_MS = 700L
+        const val TICK_MS = 500L
         const val RETRY_AFTER_MS = 1800L
         const val FRESH_START_MS = 90_000L
         const val VERIFIED_TTL_MS = 120_000L
@@ -106,6 +106,7 @@ class CleanupService : AccessibilityService() {
     private var resultDumped = false
     private var searchActionAt = 0L
     private var consecutiveReview = 0
+    private var consecutiveSoft = 0
     private var processed = 0
     private var skippedCount = 0
     private var reviewCount = 0
@@ -304,7 +305,7 @@ class CleanupService : AccessibilityService() {
         index = prefs.getInt("index", 0).coerceIn(0, names.size)
         running = prefs.getBoolean("running", false)
         consecutiveReview = 0
-        processed = 0; skippedCount = 0; reviewCount = 0; dryCount = 0
+        processed = 0; skippedCount = 0; reviewCount = 0; dryCount = 0; consecutiveSoft = 0
         lastStatus = ""
         prefs.edit().remove("failed").remove("dumps").remove("log").apply()
         if (!running) return
@@ -357,7 +358,15 @@ class CleanupService : AccessibilityService() {
         val mine = epoch
         handler.postDelayed({
             if (running && mine == epoch) openNext()
-        }, Random.nextLong(minMs, maxMs))
+        }, paced(minMs, maxMs))
+    }
+
+    /** Hız ayarı (0 güvenli, 1 normal, 2 hızlı): hesaplar arası bekleme süresini ölçekler; Snapchat'in hız sınırına karşı rastgelelik korunur. */
+    private fun paced(minMs: Long, maxMs: Long): Long {
+        val f = when (prefs.getInt("speed", 1)) { 0 -> 1.0; 2 -> 0.3; else -> 0.55 }
+        val lo = (minMs * f).toLong().coerceAtLeast(400L)
+        val hi = (maxMs * f).toLong().coerceAtLeast(lo + 200L)
+        return Random.nextLong(lo, hi)
     }
 
     private fun persistStop(reason: String) {
@@ -419,7 +428,8 @@ class CleanupService : AccessibilityService() {
                 } else {
                     // Arama aşamasında olsa bile zaman aşımı her zaman işler (eskiden sonsuza kadar bekleyebilirdi).
                     if (now - stepStartedAt > step.timeoutMs) {
-                        failStep(username, "profil açılamadı (arama aşaması=$searchStage); görülen: " + sample(nodes), screen)
+                        if (!profileVerified && !verifyReopened) softSkip(username, "profil açılamadı (arama aşaması=$searchStage); görülen: " + sample(nodes), screen)
+                        else failStep(username, "profil açılamadı (arama aşaması=$searchStage); görülen: " + sample(nodes), screen)
                         return
                     }
                     if (closeLeftoverSheet(now, screen)) return
@@ -513,7 +523,7 @@ class CleanupService : AccessibilityService() {
      */
     private fun searchForProfile(username: String, now: Long, screen: Screen): Boolean {
         val nodes = screen.nodes
-        if (now - searchActionAt < 1300L) return true
+        if (now - searchActionAt < 900L) return true
         if (searchStage == 0) {
             val search = nodes.firstOrNull {
                 it.usable && (it.viewId.endsWith("/hova_header_search_icon") ||
@@ -538,7 +548,7 @@ class CleanupService : AccessibilityService() {
             }
             if (search == null && isProfileOrChatScreen(nodes, lbl("chat"))) {
                 // Önceki hesabın profili/sohbeti açık kalmış: arama simgesi olan ekrana geri dön.
-                if (backPresses < 6 && now - lastBackAt > 1800L) {
+                if (backPresses < 6 && now - lastBackAt > 1000L) {
                     backPresses++
                     lastBackAt = now
                     performGlobalAction(GLOBAL_ACTION_BACK)
@@ -575,20 +585,21 @@ class CleanupService : AccessibilityService() {
                 n.usable && n.rawLabels.any { fold(it) == fold(username) } &&
                     screen.refs.getOrNull(n.index)?.isEditable != true
             }
-            if (matches.size == 1 && !resultDumped) { resultDumped = true; dumpScreen("ARAMA-SONUCU", screen) }
-            if (matches.size == 1) {
+            if (matches.isNotEmpty() && !resultDumped) { resultDumped = true; dumpScreen(if (matches.size == 1) "ARAMA-SONUCU" else "ARAMA-COKLU", screen) }
+            if (matches.isNotEmpty()) {
+                // Aynı kullanıcı adı birden fazla satırda görünebilir (ör. "Arkadaşlar" + öneriler): en üsttekine dokun.
+                // Güvenlik aşağı akışta: profil kimlik satırı kullanıcı adını doğrulamadan HİÇBİR işlem yapılmaz.
+                val top = matches.minByOrNull { it.top }!!
                 // Satıra/metne dokunmak SOHBET açar; profil için önce avatara (hareketle) dokun.
                 val avatar = if (resultTapMode == 0)
-                    resultAvatarCandidates(nodes, matches[0], resources.displayMetrics.widthPixels).firstOrNull() else null
-                val target = avatar ?: matches[0]
+                    resultAvatarCandidates(nodes, top, resources.displayMetrics.widthPixels).firstOrNull() else null
+                val target = avatar ?: top
                 val ok = tapNode(screen, target, avatar != null)
                 if (ok) {
                     searchStage = 3
                     searchActionAt = now
                     status("Arama sonucu açılıyor (" + (if (avatar != null) "avatar" else "satır") + ") $lastTapHow: $username")
                 }
-            } else if (matches.size > 1) {
-                searchFail(username, "Arama sonuçlarında birden fazla aynı kullanıcı adı var; dokunulmadı", screen)
             }
             return true
         }
@@ -649,7 +660,22 @@ class CleanupService : AccessibilityService() {
     }
 
     /** Otomasyon çalışırken oturumu durdurur; elle aramada yalnızca durumu yazar (oturum/başarısız listesi bozulmaz). */
+    /**
+     * Profil henüz doğrulanmadan (hiçbir şeye dokunulmadan) oluşan arama/açma hataları sistemik değil, hesaba özgü olabilir:
+     * hesabı kayda yazıp sıradakine geç; art arda 5 olursa dur. Silme akışı başladıktan sonraki hatalar ASLA atlanmaz.
+     */
+    private fun softSkip(username: String, reason: String, screen: Screen?) {
+        dumpScreen("ATLANDI", screen)
+        addFailed(username, "[profil] $reason (hiçbir şeye dokunulmadı)")
+        skippedCount++
+        consecutiveSoft++
+        if (consecutiveSoft >= 5) { stop("Art arda 5 hesap açılamadı: $username — $reason. Teşhisi kopyala ve gönder."); return }
+        status("Atlandı (dokunulmadı): $username — $reason")
+        advanceAfter(1200L, 2200L)
+    }
+
     private fun searchFail(username: String, reason: String, screen: Screen?) {
+        if (running && step == Step.PROFILE && !profileVerified && !verifyReopened) { softSkip(username, reason, screen); return }
         if (running) { failStep(username, reason, screen); return }
         manualProfileName = ""
         manualProfileHandler.removeCallbacksAndMessages(null)
@@ -776,7 +802,7 @@ class CleanupService : AccessibilityService() {
     private fun closeLeftoverSheet(now: Long, screen: Screen): Boolean {
         val m = findExact(screen.nodes, lbl("sheetdone"))
         if (m !is Match.One) return false
-        if (now - sheetClosedAt >= 1500L && isStable("sheetdone", m.node, now)) {
+        if (now - sheetClosedAt >= 1000L && isStable("sheetdone", m.node, now)) {
             sheetClosedAt = now
             val ok = tapNode(screen, m.node, false)
             status("Açık kalan alt sayfa kapatılıyor: $lastTapHow ${if (ok) "gönderildi" else "reddedildi"}")
@@ -853,6 +879,7 @@ class CleanupService : AccessibilityService() {
     private fun dryRunDone(username: String, screen: Screen) {
         dumpScreen("KURU-ONAY-EKRANI", screen)
         dryCount++
+        consecutiveSoft = 0
         val cancel = findExact(screen.nodes, lbl("cancel"))
         if (cancel is Match.One) tapNode(screen, cancel.node, true) else performGlobalAction(GLOBAL_ACTION_BACK)
         status("KURU ÇALIŞTIRMA tamam: $username için akış onay ekranına kadar çalıştı, 'Kaldır'a BASILMADI")
@@ -863,6 +890,7 @@ class CleanupService : AccessibilityService() {
         markStatus(username, "done")
         processed++
         consecutiveReview = 0
+        consecutiveSoft = 0
         status("Silindi ve DOĞRULANDI ('Ekle' görüldü): $username")
         advanceAfter(2500L, 4500L)
     }

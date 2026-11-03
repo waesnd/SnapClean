@@ -75,6 +75,7 @@ class MainActivity : ComponentActivity() {
             var automationResult by remember { mutableStateOf(cleanupPrefs.getString("last_result", "").orEmpty()) }
             var automationRunning by remember { mutableStateOf(cleanupPrefs.getBoolean("running", false)) }
             var dryRun by remember { mutableStateOf(cleanupPrefs.getBoolean("dry_run", true)) }
+            var speed by remember { mutableStateOf(cleanupPrefs.getInt("speed", 1)) }
             var labelsText by remember { mutableStateOf(cleanupPrefs.getString("labels", null) ?: Labels.defaultText()) }
             var serviceText by remember { mutableStateOf("") }
             var failedText by remember { mutableStateOf(cleanupPrefs.getString("failed", "").orEmpty()) }
@@ -336,6 +337,16 @@ class MainActivity : ComponentActivity() {
                                     else t("Dry run OFF: friends WILL be removed", "Kuru çalıştırma KAPALI: hesaplar GERÇEKTEN silinir"),
                                     style = MaterialTheme.typography.bodySmall
                                 )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(t("Speed (pause between accounts)", "Hız (hesaplar arası bekleme)"), style = MaterialTheme.typography.labelMedium)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(0 to t("Safe", "Güvenli"), 1 to t("Normal", "Normal"), 2 to t("Fast", "Hızlı")).forEach { (v, label) ->
+                                    FilterChip(selected = speed == v, onClick = {
+                                        speed = v
+                                        cleanupPrefs.edit().putInt("speed", v).apply()
+                                    }, label = { Text(label) })
+                                }
                             }
                             if (failedText.isNotBlank()) {
                                 Spacer(Modifier.height(6.dp))

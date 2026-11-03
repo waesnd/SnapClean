@@ -72,3 +72,10 @@ Bundan çıkan kurallar (2.7):
 
 - Silme sonrası gerçek eylem düğmesi etiketi henüz gözlenmedi (silmeden önce `Snap`). Doğrulama: hedef profil görünür + "beri arkadaşsın" satırı yok + düğme "Ekle" VEYA silmeden önceki etikete eşit olmayan başka bir etiket. Gerçek etiket günlüğe "DOĞRULAMA: eylem düğmesi 'Snap' → '…'" olarak yazılır.
 - CI artık `main`'e her push'ta derler ve birim testlerini çalıştırır (APK: Actions → son çalışma → SnapClean-debug).
+
+## 3.0-beta — hız ve sağlamlık
+
+- Hız ayarı (Güvenli / Normal / Hızlı): hesaplar arası rastgele bekleme 1,0× / 0,55× / 0,3× ölçeklenir. Normal varsayılandır. Çok hızlı toplu silme Snapchat'te hız sınırına takılabilir; 200'lük partilerle ve aralarda ara vererek ilerle.
+- Tick 700→500 ms, arama aralığı 1300→900 ms, GERİ aralığı 1800→1000 ms.
+- Profil doğrulanmadan (hiçbir şeye dokunulmadan) oluşan arama/açma hataları artık oturumu durdurmaz: hesap "başarısız/dokunulmayan" listesine yazılır, sıradakine geçilir; art arda 5 olursa durur. Silme akışı başladıktan sonraki hatalar yine anında durdurur.
+- Arama sonuçlarında aynı kullanıcı adı birden fazla satırdaysa en üsttekine dokunulur; profil kimlik satırı doğrulanmadan işlem yapılmaz.
