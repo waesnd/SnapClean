@@ -2,8 +2,8 @@ name: Build Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths: ['app/**', 'build.gradle.kts', 'settings.gradle.kts', '.github/workflows/build-apk.yml']
+    branches: [main, 'improve/**']
+    paths: ['app/**', 'build.gradle.kts', 'settings.gradle.kts', 'gradle.properties', 'gradle/**', '.github/workflows/build-apk.yml']
 permissions:
   contents: read
 jobs:
@@ -32,6 +32,13 @@ jobs:
           key: snapclean-beta-debug-signing-v1
       - name: Run parser regression tests
         run: gradle testDebugUnitTest --no-daemon
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
       - name: Build debug APK
         run: gradle assembleDebug --no-daemon
       - name: Verify stable release signing secrets
