@@ -188,12 +188,12 @@ class CleanupService : AccessibilityService() {
             val screen = readScreen()
             val now = SystemClock.uptimeMillis()
             if (screen != null && onTargetProfile(screen.nodes, manualProfileName)) {
-                prefs.edit().putString("last_result", "Profil bulundu: $manualProfileName").apply()
+                prefs.edit().putString("last_result", "Profil bulundu").apply()
                 manualProfileName = ""
                 return
             }
             if (now - manualProfileStarted > 30000L) {
-                prefs.edit().putString("last_result", "Profil açılamadı: $manualProfileName (arama sonucu doğrulanamadı)").apply()
+                prefs.edit().putString("last_result", "Profil açılamadı (arama sonucu doğrulanamadı)").apply()
                 manualProfileName = ""
                 return
             }
@@ -238,6 +238,7 @@ class CleanupService : AccessibilityService() {
             info.notificationTimeout = 100
             serviceInfo = info
         }
+        prefs.edit().remove("log").remove("failed").remove("dumps").remove("manual_dumps").remove("last_result").apply()
         prefs.registerOnSharedPreferenceChangeListener(sessionListener)
         prefs.edit().putBoolean("svc_connected", true).putString("svc_build", buildTag()).apply()
         // Güvenlik: eski/yarım kalmış bir oturum servis yeniden bağlanınca KENDİLİĞİNDEN başlamaz.
@@ -370,7 +371,7 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun persistStop(reason: String) {
-        prefs.edit().putBoolean("running", false).putInt("index", index).putString("last_result", reason).apply()
+        prefs.edit().putBoolean("running", false).putInt("index", index).putString("last_result", safeDiagnostic(reason)).apply()
     }
 
     private fun stop(reason: String) {
@@ -679,7 +680,7 @@ class CleanupService : AccessibilityService() {
         if (running) { failStep(username, reason, screen); return }
         manualProfileName = ""
         manualProfileHandler.removeCallbacksAndMessages(null)
-        prefs.edit().putString("last_result", "Profil açılamadı: $username — $reason").apply()
+        prefs.edit().putString("last_result", safeDiagnostic(reason)).apply()
     }
 
     private fun onProfile(username: String, now: Long, screen: Screen) {
@@ -1040,9 +1041,9 @@ class CleanupService : AccessibilityService() {
     }
 
     private fun status(msg: String) {
-        prefs.edit().putString("last_result", msg).apply()
+        prefs.edit().putString("last_result", safeDiagnostic(msg)).apply()
         if (msg != lastStatus) {
-            lastStatus = msg
+            lastStatus = safeDiagnostic(msg)
             appendLog(msg)
         }
     }
@@ -1051,13 +1052,13 @@ class CleanupService : AccessibilityService() {
 
     private fun appendLog(msg: String) {
         val old = prefs.getString("log", "").orEmpty()
-        val merged = (old + "\n" + stamp() + " [" + step.name + "] " + msg).takeLast(7000)
+        val merged = (old + "\n" + stamp() + " [" + step.name + "] " + safeDiagnostic(msg)).takeLast(7000)
         prefs.edit().putString("log", merged).apply()
     }
 
     private fun addFailed(username: String, reason: String) {
         val old = prefs.getString("failed", "").orEmpty()
-        prefs.edit().putString("failed", (old + "\n" + username + " | " + reason).trim()).apply()
+        prefs.edit().putString("failed", (old + "\n" + "hesap_sırası=" + (index + 1) + " | " + safeDiagnostic(reason)).trim()).apply()
     }
 
     private fun buildTag(): String = try {
@@ -1066,14 +1067,30 @@ class CleanupService : AccessibilityService() {
         "?"
     }
 
-    private fun describe(n: UiNode): String {
-        val label = n.rawLabels.firstOrNull().orEmpty().take(24)
-        return n.className.substringAfterLast('.') + "[" + n.left + "," + n.top + "," + n.right + "," + n.bottom + "]" +
-            (if (label.isNotEmpty()) " '$label'" else "")
-    }
+    private fun describe(n: UiNode): String =
+        n.className.substringAfterLast('.') + "[" + n.left + "," + n.top + "," + n.right + "," + n.bottom + "]" +
+            " id=" + n.viewId.substringAfterLast('/').take(60)
 
     private fun sample(nodes: List<UiNode>): String =
-        nodes.filter { it.usable }.flatMap { it.rawLabels }.distinct().take(8).joinToString(" / ").take(160)
+        nodes.filter { it.usable }.map { it.viewId.substringAfterLast('/') }
+            .filter { it.isNotBlank() }.distinct().take(8).joinToString(" / ").take(160)
+
+    private fun safeDiagnostic(message: String): String {
+        val category = when {
+            message.contains("KANIT", true) || message.contains("bant", true) -> "sohbet_kanıtı"
+            message.contains("doğrula", true) || message.contains("kimlik", true) -> "doğrulama"
+            message.contains("onay", true) -> "onay"
+            message.contains("arama", true) || message.contains("aran", true) -> "arama"
+            message.contains("profil", true) -> "profil"
+            message.contains("menü", true) -> "menü"
+            message.contains("sil", true) || message.contains("kaldır", true) -> "silme"
+            message.contains("dokun", true) || message.contains("gesture", true) -> "dokunma"
+            message.contains("ekran", true) -> "ekran"
+            message.contains("hata", true) || message.contains("durdu", true) -> "hata"
+            else -> "durum"
+        }
+        return "adım=${step.name}; olay=$category; hesap_sırası=${index + 1}"
+    }
 
     private fun publishRead(screen: Screen, now: Long) {
         if (now - lastPublish < 1500L) return
@@ -1091,8 +1108,8 @@ class CleanupService : AccessibilityService() {
         sb.append("=== ").append(tag).append(" | ").append(stamp()).append(" | sürüm ").append(buildTag())
             .append(" | ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
             .append(" Android ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
-        sb.append("hesap=").append(names.getOrNull(index)).append(" adım=").append(step.name)
-            .append(" deneme=").append(attempts).append(" okumaSorunu=").append(lastReadIssue).append('\n')
+        sb.append("hesap_sırası=").append(index + 1).append(" adım=").append(step.name)
+            .append(" deneme=").append(attempts).append(" okumaSorunu=").append(if (lastReadIssue.isBlank()) "yok" else "var").append('\n')
         if (screen == null) {
             sb.append("(ekran okunamadı)\n")
         } else {
@@ -1100,15 +1117,14 @@ class CleanupService : AccessibilityService() {
             sb.append("toplam=").append(n.size).append(" etiketli=").append(n.count { it.rawLabels.isNotEmpty() })
                 .append(" tıklanabilir=").append(n.count { it.clickable })
                 .append(" görünür=").append(n.count { it.visible }).append(" pencere=").append(screen.windows).append('\n')
-            sb.append("derinlik|sınıf|id|text|desc|bayrak(C=tıklanabilir,x=pasif,h=gizli)|sol,üst,sağ,alt\n")
+            sb.append("derinlik|sınıf|id|bayrak(C=tıklanabilir,x=pasif,h=gizli)|sol,üst,sağ,alt\n")
             var lines = 0
             for (x in n) {
                 if (lines >= MAX_DUMP_LINES) { sb.append("... (kırpıldı)\n"); break }
                 if (x.rawLabels.isEmpty() && !x.clickable && x.viewId.isEmpty()) continue
                 lines++
                 sb.append(x.depth).append('|').append(x.className.substringAfterLast('.')).append('|')
-                    .append(x.viewId.substringAfterLast('/')).append("|t='").append(x.text.take(60).replace('\n', ' '))
-                    .append("'|d='").append(x.desc.take(60).replace('\n', ' ')).append("'|")
+                    .append(x.viewId.substringAfterLast('/').take(60)).append('|')
                     .append(if (x.clickable) "C" else "").append(if (!x.enabled) "x" else "").append(if (!x.visible) "h" else "")
                     .append('|').append(x.left).append(',').append(x.top).append(',').append(x.right).append(',').append(x.bottom).append('\n')
             }

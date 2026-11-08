@@ -356,10 +356,10 @@ class MainActivity : ComponentActivity() {
                             Spacer(Modifier.height(8.dp))
                             Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 OutlinedButton(onClick = {
-                                    val header = serviceText + "\n" + automationResult + "\n--- LOG ---\n" + cleanupPrefs.getString("log", "").orEmpty() +
-                                        "\n--- BASARISIZ ---\n" + cleanupPrefs.getString("failed", "").orEmpty() +
-                                        "\n--- EKRAN DOKUMLERI ---\n" + cleanupPrefs.getString("dumps", "").orEmpty().replace("\u0001", "\n\n") +
-                                        "\n--- MANUEL KAYITLAR ---\n" + cleanupPrefs.getString("manual_dumps", "").orEmpty().replace("\u0001", "\n\n")
+                                    val header = "SnapClean tanı özeti\n" +
+                                        "otomatik_döküm_sayısı=" + cleanupPrefs.getString("dumps", "").orEmpty().split("\u0001").count { it.isNotBlank() } +
+                                        "\nmanuel_döküm_sayısı=" + cleanupPrefs.getString("manual_dumps", "").orEmpty().split("\u0001").count { it.isNotBlank() } +
+                                        "\nHam ekran metinleri ve kullanıcı adları aktarılmaz."
                                     copyText("SnapClean diagnostics", header, t("Diagnostics copied", "Teşhis panoya kopyalandı"))
                                 }) { Text(t("Copy diagnostics", "Teşhisi kopyala")) }
                                 OutlinedButton(onClick = {
