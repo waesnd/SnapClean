@@ -366,3 +366,41 @@ object Labels {
         return result
     }
 }
+
+// ---------------------------------------------------------------- gizlilik (teşhis çıktısı)
+
+/** Etiket sözlüğündeki tüm bilinen etiketlerin normalleştirilmiş kümesi (redactLabel için). */
+fun knownLabelSet(labels: Map<String, List<String>>): Set<String> =
+    labels.values.flatten().map(::fold).filter { it.isNotEmpty() }.toSet()
+
+private val usernameShape = Regex("^[a-z0-9._-]{3,30}$")
+
+/**
+ * Teşhis dökümüne yazılacak bir ekran metnini gizlilik için süzer. Amaç: kapıların çalışması için gereken
+ * bilinen etiketler okunur kalsın, ama sohbet mesajı, görünen ad ve başkasının kullanıcı adı diske/panoya düşmesin.
+ *  - Bilinen etiket (tam eşleşme, ya da >=12 karakterlik bilinen parça içeriyorsa) korunur; içindeki hedef kullanıcı adı maskelenir.
+ *  - Tıklanabilir, kısa (<=24) ve kullanıcı adına benzemeyen metin korunur (düğme etiketi olma ihtimali yüksek).
+ *  - Diğer her şey (serbest metin, kullanıcı adına benzeyen tek kelime) yalnızca uzunluğuyla yazılır.
+ */
+fun redactLabel(raw: String, clickable: Boolean, known: Set<String>, username: String?): String {
+    val text = raw.trim()
+    if (text.isEmpty()) return ""
+    val f = fold(text)
+    val knownHit = known.any { k -> f == k || (k.length >= 12 && f.contains(k)) }
+    if (knownHit) return if (username.isNullOrEmpty()) text else maskUsernames(text, listOf(username))
+    val mentionsTarget = !username.isNullOrEmpty() && f.contains(fold(username))
+    if (clickable && text.length <= 24 && !usernameShape.matches(f) && !mentionsTarget) return text
+    return "‹${text.length} krk›"
+}
+
+/**
+ * Metindeki verilen kullanıcı adlarını (büyük/küçük harf duyarsız) yer tutucuyla değiştirir. Uzun adlar önce
+ * değiştirilir ki "abc" adı "abcd" adının içinde kalan parçayı bozmasın. 3 karakterden kısa adlar yok sayılır.
+ */
+fun maskUsernames(text: String, names: List<String>, placeholder: (Int) -> String = { "<kullanıcı>" }): String {
+    var out = text
+    val indexed = names.mapIndexed { i, n -> i to n.trim() }.filter { it.second.length >= 3 }
+        .sortedByDescending { it.second.length }
+    for ((i, n) in indexed) out = out.replace(Regex(Regex.escape(n), RegexOption.IGNORE_CASE), placeholder(i))
+    return out
+}

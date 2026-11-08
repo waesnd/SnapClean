@@ -1,11 +1,14 @@
 package com.snapclean.app
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.provider.Settings
 import android.content.ComponentName
 import android.view.accessibility.AccessibilityManager
@@ -131,9 +134,13 @@ class MainActivity : ComponentActivity() {
                     .setPrimaryClip(ClipData.newPlainText("SnapClean username", username))
                 message = t("Username copied", "Kullanıcı adı kopyalandı")
             }
-            fun copyText(label: String, text: String, doneMessage: String) {
-                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager)
-                    .setPrimaryClip(ClipData.newPlainText(label, text))
+            fun copyText(label: String, text: String, doneMessage: String, sensitive: Boolean = false) {
+                val clip = ClipData.newPlainText(label, text)
+                if (sensitive && Build.VERSION.SDK_INT >= 33) {
+                    // Android 13+: panonun ön izlemesinde ve bildirimde içerik gösterilmesin.
+                    clip.description.extras = PersistableBundle().apply { putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true) }
+                }
+                (getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(clip)
                 message = doneMessage
             }
             fun openProfile(username: String) {
@@ -360,7 +367,11 @@ class MainActivity : ComponentActivity() {
                                         "\n--- BASARISIZ ---\n" + cleanupPrefs.getString("failed", "").orEmpty() +
                                         "\n--- EKRAN DOKUMLERI ---\n" + cleanupPrefs.getString("dumps", "").orEmpty().replace("\u0001", "\n\n") +
                                         "\n--- MANUEL KAYITLAR ---\n" + cleanupPrefs.getString("manual_dumps", "").orEmpty().replace("\u0001", "\n\n")
-                                    copyText("SnapClean diagnostics", header, t("Diagnostics copied", "Teşhis panoya kopyalandı"))
+                                    // Gizlilik: paylaşılabilecek teşhis metninde bu partideki kullanıcı adları numaralanır.
+                                    val batchNames = cleanupPrefs.getString("names", "").orEmpty().split("\n").map { it.trim() }.filter { it.isNotEmpty() }
+                                    val masked = maskUsernames(header, batchNames) { i -> "kullanıcı#${i + 1}" }
+                                    copyText("SnapClean diagnostics", masked,
+                                        t("Diagnostics copied (usernames masked)", "Teşhis panoya kopyalandı (kullanıcı adları maskelendi)"), sensitive = true)
                                 }) { Text(t("Copy diagnostics", "Teşhisi kopyala")) }
                                 OutlinedButton(onClick = {
                                     cleanupPrefs.edit().putLong("capture_request", System.nanoTime()).apply()
@@ -477,6 +488,8 @@ class MainActivity : ComponentActivity() {
                     text = { Text(t("All imported records and review statuses will be deleted from this device.", "Aktarılan kayıtlar ve inceleme durumları bu cihazdan silinecek.")) },
                     confirmButton = { TextButton(onClick = {
                         store.clear()
+                        cleanupPrefs.edit().putBoolean("running", false).remove("names").remove("failed")
+                            .remove("log").remove("dumps").remove("manual_dumps").remove("last_result").apply()
                         refresh()
                         selected = emptySet()
                         confirmClear = false

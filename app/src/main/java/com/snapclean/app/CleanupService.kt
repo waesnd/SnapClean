@@ -118,6 +118,7 @@ class CleanupService : AccessibilityService() {
     private var lastStatus = ""
     private var labelsRaw: String? = "\u0000"
     private var labels: Map<String, List<String>> = Labels.parse(null)
+    private var knownSet: Set<String> = knownLabelSet(Labels.parse(null))
 
     private val sessionListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "manual_profile_token") {
@@ -822,6 +823,7 @@ class CleanupService : AccessibilityService() {
         if (raw != labelsRaw) {
             labelsRaw = raw
             labels = Labels.parse(raw)
+            knownSet = knownLabelSet(labels)
         }
     }
 
@@ -1066,14 +1068,17 @@ class CleanupService : AccessibilityService() {
         "?"
     }
 
+    /** Gizlilik: teşhise/duruma yazılan ekran metni süzülür (bkz. redactLabel). */
+    private fun safeLabel(n: UiNode, text: String): String = redactLabel(text, n.clickable, knownSet, names.getOrNull(index))
+
     private fun describe(n: UiNode): String {
-        val label = n.rawLabels.firstOrNull().orEmpty().take(24)
+        val label = safeLabel(n, n.rawLabels.firstOrNull().orEmpty()).take(24)
         return n.className.substringAfterLast('.') + "[" + n.left + "," + n.top + "," + n.right + "," + n.bottom + "]" +
             (if (label.isNotEmpty()) " '$label'" else "")
     }
 
     private fun sample(nodes: List<UiNode>): String =
-        nodes.filter { it.usable }.flatMap { it.rawLabels }.distinct().take(8).joinToString(" / ").take(160)
+        nodes.filter { it.usable }.flatMap { n -> n.rawLabels.map { safeLabel(n, it) } }.distinct().take(8).joinToString(" / ").take(160)
 
     private fun publishRead(screen: Screen, now: Long) {
         if (now - lastPublish < 1500L) return
@@ -1091,7 +1096,7 @@ class CleanupService : AccessibilityService() {
         sb.append("=== ").append(tag).append(" | ").append(stamp()).append(" | sürüm ").append(buildTag())
             .append(" | ").append(Build.MANUFACTURER).append(' ').append(Build.MODEL)
             .append(" Android ").append(Build.VERSION.RELEASE).append(" (API ").append(Build.VERSION.SDK_INT).append(")\n")
-        sb.append("hesap=").append(names.getOrNull(index)).append(" adım=").append(step.name)
+        sb.append("hesap=#").append(index + 1).append(" adım=").append(step.name)
             .append(" deneme=").append(attempts).append(" okumaSorunu=").append(lastReadIssue).append('\n')
         if (screen == null) {
             sb.append("(ekran okunamadı)\n")
@@ -1107,8 +1112,8 @@ class CleanupService : AccessibilityService() {
                 if (x.rawLabels.isEmpty() && !x.clickable && x.viewId.isEmpty()) continue
                 lines++
                 sb.append(x.depth).append('|').append(x.className.substringAfterLast('.')).append('|')
-                    .append(x.viewId.substringAfterLast('/')).append("|t='").append(x.text.take(60).replace('\n', ' '))
-                    .append("'|d='").append(x.desc.take(60).replace('\n', ' ')).append("'|")
+                    .append(x.viewId.substringAfterLast('/')).append("|t='").append(safeLabel(x, x.text).take(60).replace('\n', ' '))
+                    .append("'|d='").append(safeLabel(x, x.desc).take(60).replace('\n', ' ')).append("'|")
                     .append(if (x.clickable) "C" else "").append(if (!x.enabled) "x" else "").append(if (!x.visible) "h" else "")
                     .append('|').append(x.left).append(',').append(x.top).append(',').append(x.right).append(',').append(x.bottom).append('\n')
             }
