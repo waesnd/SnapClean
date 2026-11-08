@@ -241,7 +241,7 @@ fun screenSignature(nodes: List<UiNode>): Int =
 /**
  * "Arkadaşlıktan çıkar" onay penceresi hedef kullanıcıyı adıyla anıyor mu? Arkasındaki profilin kimlik
  * satırı sayılmaz (o zaten ekranda kalır); yalnızca pencerenin kendi metni doğrulama sağlar.
- * Gerçek metin: "nilgunoruc25 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?"
+ * Gerçek metin: "deniztest42 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?"
  */
 fun dialogNamesUser(nodes: List<UiNode>, username: String): Boolean =
     usernameVisible(nodes.filter { it.viewId.substringAfterLast('/') != PROFILE_USERNAME_ID }, username)

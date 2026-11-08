@@ -110,14 +110,14 @@ class AutomationLogicTest {
         node(id = "com.snapchat.android:id/unified_profile_share_button", l = 941, t = 137, r = 1055, b = 251, index = 0),
         node(id = "com.snapchat.android:id/unified_profile_icon_button_action_menu", l = 1079, t = 137, r = 1193, b = 251, index = 1),
         node(text = "Nilgün Oruç", desc = "Nilgün Oruç", id = "x:id/profile_identity_section_display_name", l = 321, t = 594, r = 625, b = 668, index = 2),
-        node(text = "nilgunoruc25", desc = "nilgunoruc25", id = "x:id/profile_identity_section_username", l = 321, t = 668, r = 545, b = 717, index = 3),
+        node(text = "deniztest42", desc = "deniztest42", id = "x:id/profile_identity_section_username", l = 321, t = 668, r = 545, b = 717, index = 3),
         node(text = "eminee.bayir", l = 134, t = 1521, r = 353, b = 1570, index = 4),
         node(text = "add_button", l = 118, t = 1594, r = 369, b = 1690, index = 5),
         node(text = "Nilgün Oruç adlı kişiyle 4 Ekim 2026 tarihinden beri arkadaş", l = 87, t = 1987, r = 1133, b = 2047, clickable = true, index = 6)
     )
 
     @Test fun realMutualFriendProfileIsNeverTouched() {
-        assertEquals(ProfileVerdict.MUTUAL_FRIEND, classifyProfile(realFriendProfile(), "nilgunoruc25", labels))
+        assertEquals(ProfileVerdict.MUTUAL_FRIEND, classifyProfile(realFriendProfile(), "deniztest42", labels))
     }
 
     @Test fun suggestionCardUsernameDoesNotVerifyAnotherAccount() {
@@ -157,7 +157,7 @@ class AutomationLogicTest {
         assertFalse(onTargetProfile(listOf(node(text = "other_user", id = id)), "sample_user"))
         // Başka profil açık, aranan hesap yalnızca öneri kartında
         assertFalse(onTargetProfile(realFriendProfile(), "eminee.bayir"))
-        assertTrue(onTargetProfile(realFriendProfile(), "nilgunoruc25"))
+        assertTrue(onTargetProfile(realFriendProfile(), "deniztest42"))
         // Gizli kimlik satırı sayılmaz
         assertFalse(onTargetProfile(listOf(node(text = "sample_user", id = id, visible = false)), "sample_user"))
     }
@@ -252,7 +252,7 @@ class AutomationLogicTest {
 
     // Onay penceresi (ekran görüntüsü 4).
     private fun confirmDialog() = listOf(
-        node(text = "nilgunoruc25 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?", l = 190, t = 770, r = 710, b = 930, index = 0),
+        node(text = "deniztest42 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden emin misin?", l = 190, t = 770, r = 710, b = 930, index = 0),
         node(text = "Kaldır", l = 190, t = 977, r = 708, b = 1088, index = 1, clickable = true),
         node(text = "İptal et", l = 380, t = 1140, r = 520, b = 1190, index = 2)
     )
@@ -276,15 +276,15 @@ class AutomationLogicTest {
         val d = confirmDialog()
         assertEquals(1, (findExact(d, Labels.defaults["confirm"].orEmpty()) as Match.One).node.index)
         assertEquals(2, (findExact(d, Labels.defaults["cancel"].orEmpty()) as Match.One).node.index)
-        assertTrue(dialogNamesUser(d, "nilgunoruc25"))
+        assertTrue(dialogNamesUser(d, "deniztest42"))
         assertFalse(dialogNamesUser(d, "nilgunoruc2"))      // önek eşleşmez
         assertFalse(dialogNamesUser(d, "baska_kullanici"))
     }
 
     @Test fun profileIdentityRowAloneDoesNotCountAsDialogConfirmation() {
-        val identity = node(text = "nilgunoruc25", id = "x:id/profile_identity_section_username", index = 0)
+        val identity = node(text = "deniztest42", id = "x:id/profile_identity_section_username", index = 0)
         val noName = listOf(node(text = "Kaldır", index = 1), identity)
-        assertFalse(dialogNamesUser(noName, "nilgunoruc25"))
+        assertFalse(dialogNamesUser(noName, "deniztest42"))
     }
 
     private fun oneWayChat() = listOf(
@@ -303,12 +303,12 @@ class AutomationLogicTest {
 
     @Test fun friendSinceTextAloneIsNeverProofOfOneWay() {
         val p = realFriendProfile()
-        assertEquals(ProfileVerdict.MUTUAL_FRIEND, classifyProfile(p, "nilgunoruc25", labels))
+        assertEquals(ProfileVerdict.MUTUAL_FRIEND, classifyProfile(p, "deniztest42", labels))
     }
 
     @Test fun friendSinceWithChatProofIsAllowedToProceed() {
         val p = realFriendProfile()
-        assertEquals(ProfileVerdict.PENDING_OK, classifyProfile(p, "nilgunoruc25", labels, oneWayProven = true))
+        assertEquals(ProfileVerdict.PENDING_OK, classifyProfile(p, "deniztest42", labels, oneWayProven = true))
     }
 
     @Test fun proofNeverOverridesWrongProfile() {
@@ -323,11 +323,11 @@ class AutomationLogicTest {
         assertFalse(isProfileOrChatScreen(listOf(node(text = "Arkadaşlar")), Labels.defaults["chat"].orEmpty()))
     }
 
-    // Gerçek e256002 dökümü (2.8-beta): onay penceresinde "Kaldır" yazısı YOK, yazısız tıklanabilir View var.
+    // Gerçek k583104 dökümü (2.8-beta): onay penceresinde "Kaldır" yazısı YOK, yazısız tıklanabilir View var.
     private fun realUnlabeledConfirm() = listOf(
         node(index = 0, l = 145, t = 963, r = 1075, b = 1727, clickable = true, id = "x:id/0_resource_name_obfuscated"),
         node(index = 1, l = 241, t = 1035, r = 979, b = 1655, id = "x:id/dialog_content"),
-        node(text = "e256002 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden", index = 2, l = 241, t = 1035, r = 979, b = 1274, id = "x:id/alert_dialog_title"),
+        node(text = "k583104 adlı kullanıcıyı arkadaşlıktan çıkarmak istediğinden", index = 2, l = 241, t = 1035, r = 979, b = 1274, id = "x:id/alert_dialog_title"),
         node(index = 3, l = 241, t = 1322, r = 979, b = 1481, clickable = true),
         node(text = "İptal et", index = 4, l = 241, t = 1505, r = 979, b = 1655, clickable = true, id = "x:id/cancel_button")
     )
@@ -361,12 +361,12 @@ class AutomationLogicTest {
     }
 
     @Test fun dialogNamesUserWorksOnRealTitle() {
-        assertTrue(dialogNamesUser(realUnlabeledConfirm(), "e256002"))
+        assertTrue(dialogNamesUser(realUnlabeledConfirm(), "k583104"))
         assertFalse(dialogNamesUser(realUnlabeledConfirm(), "baskakisi"))
     }
 
     private fun staleSearchScreen() = listOf(
-        node(text = "gulsumcanayaz24", index = 0, l = 100, t = 130, r = 900, b = 260),
+        node(text = "mavikullanici47", index = 0, l = 100, t = 130, r = 900, b = 260),
         node(text = "İptal Et", index = 1, l = 950, t = 130, r = 1190, b = 260),
         node(text = "Arkadaşlar ve Gruplar", index = 2, l = 40, t = 300, r = 900, b = 360),
         node(text = "Gülsüm Canayaz", index = 3, l = 300, t = 400, r = 900, b = 470)
@@ -384,19 +384,19 @@ class AutomationLogicTest {
     }
 
     private fun profileWith(actionDesc: String, extra: List<UiNode> = emptyList()) = listOf(
-        node(text = "e256002", index = 0, id = "x:id/profile_identity_section_username", l = 321, t = 668, r = 474, b = 717),
+        node(text = "k583104", index = 0, id = "x:id/profile_identity_section_username", l = 321, t = 668, r = 474, b = 717),
         node(desc = actionDesc, index = 1, id = "x:id/non_friend_action_button_single", l = 48, t = 895, r = 1171, b = 1027)
     ) + extra
 
     @Test fun removalVerifiedWhenSinceLineGoneAndButtonChanged() {
-        assertTrue(removalVerified(profileWith("Ekle"), "e256002", labels, "Snap"))
-        assertTrue(removalVerified(profileWith("Arkadaş olarak ekle"), "e256002", labels, "Snap"))
+        assertTrue(removalVerified(profileWith("Ekle"), "k583104", labels, "Snap"))
+        assertTrue(removalVerified(profileWith("Arkadaş olarak ekle"), "k583104", labels, "Snap"))
     }
 
     @Test fun removalNotVerifiedWhileStillFriend() {
         val since = node(text = "E adlı kişiyle 26 Ağustos 2026 tarihinden beri arkadaşsın.", index = 2)
-        assertFalse(removalVerified(profileWith("Ekle", listOf(since)), "e256002", labels, "Snap"))
-        assertFalse(removalVerified(profileWith("Snap"), "e256002", labels, "Snap"))
+        assertFalse(removalVerified(profileWith("Ekle", listOf(since)), "k583104", labels, "Snap"))
+        assertFalse(removalVerified(profileWith("Snap"), "k583104", labels, "Snap"))
         assertFalse(removalVerified(profileWith("Snap"), "baskakisi", labels, "Snap"))
     }
 

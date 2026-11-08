@@ -60,13 +60,13 @@ Bundan çıkan kurallar (2.7):
 
 ## 2.9-beta — yazısız onay düğmesi
 
-- Gerçek dökümde (e256002) onay penceresinde "Kaldır" yazısı yoktur: `alert_dialog_title` + `dialog_content` içinde yazısız tıklanabilir bir View + `cancel_button`. 2.8'de adım bu yüzden ilerlemedi.
+- Gerçek dökümde (k583104) onay penceresinde "Kaldır" yazısı yoktur: `alert_dialog_title` + `dialog_content` içinde yazısız tıklanabilir bir View + `cancel_button`. 2.8'de adım bu yüzden ilerlemedi.
 - Pencere başlıktan ("arkadaşlıktan çıkarmak" + kullanıcı adı) tanınır; düğme, başlığın altındaki ve "İptal et"in üstündeki TEK tıklanabilir düğümdür (birden fazlaysa durur).
 - ACTION_CLICK bir kez etkisiz kalırsa sonraki dokunuşlar doğrudan HAREKET (dispatchGesture) ile yapılır.
 
 ## 2.9.1-beta — eski arama ekranı
 
-- Gerçek log (gulsumcanayaz24 kuru çalıştırma tamam, sonra aysel20267118): GERİ tuşları profil→sohbet→ARAMA SONUÇLARI ekranına döner; orada arama simgesi yoktur. Artık düzenlenebilir alan + "İptal Et" görülürse `İptal Et`e hareketle basılır, sonra liste ekranından normal arama başlar.
+- Gerçek log (mavikullanici47 kuru çalıştırma tamam, sonra selintest58321): GERİ tuşları profil→sohbet→ARAMA SONUÇLARI ekranına döner; orada arama simgesi yoktur. Artık düzenlenebilir alan + "İptal Et" görülürse `İptal Et`e hareketle basılır, sonra liste ekranından normal arama başlar.
 
 ## 2.9.2-beta — silme doğrulaması
 
